@@ -50,6 +50,24 @@ function testGithub() {
     ? '✓ token ใช้ได้ (rate limit เหลือ ' + JSON.parse(auth.getContentText()).rate.remaining + ')'
     : '✗ token ใช้ไม่ได้: HTTP ' + auth.getResponseCode() + ' ' + auth.getContentText().slice(0, 200));
 
+  var me = UrlFetchApp.fetch('https://api.github.com/user', githubRequest_('x/x', '', gh.trim()));
+  if (me.getResponseCode() === 200) Logger.log('token เป็นของ: ' + JSON.parse(me.getContentText()).login);
+
+  var seen = UrlFetchApp.fetch('https://api.github.com/user/repos?per_page=100&sort=pushed', githubRequest_('x/x', '', gh.trim()));
+  if (seen.getResponseCode() === 200) {
+    var list = JSON.parse(seen.getContentText());
+    var priv = list.filter(function (r) { return r.private; });
+    Logger.log('repo ที่ token มองเห็น: ' + list.length + ' (private ' + priv.length + ')');
+    list.forEach(function (r) {
+      Logger.log('  ' + (r.private ? '🔒 private' : '   public ') + '  ' + r.full_name + (r.archived ? '  (archived — ข้าม)' : ''));
+    });
+    if (!priv.length) {
+      Logger.log('✗ ไม่เห็น private repo เลย → ตรวจ: (1) Repository access = All/Only select แล้วกด Update หรือยัง ' +
+        '(2) แก้ token ตัวเดียวกับที่อยู่ใน GITHUB_TOKEN หรือเปล่า (3) ถ้า private repo อยู่ใน Organization ' +
+        'ต้องสร้าง token ใหม่โดยเลือก Resource owner = org นั้น');
+    }
+  }
+
   var projects = readObjects_('Projects').filter(function (p) { return p.repo; });
   if (!projects.length) { Logger.log('✗ ยังไม่มีโปรเจคไหนใส่ repo — กด "แก้ไขโปรเจค" แล้วใส่ owner/repo'); return; }
   projects.forEach(function (p) {

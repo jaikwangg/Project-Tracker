@@ -222,6 +222,23 @@
   .danger-zone { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
   .form-err { min-height: 1.4em; margin: 0 0 8px; color: var(--red); font-size: 14px; }
 
+  /* multi-select */
+  .select-bar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 15;
+    padding: 10px 0 calc(10px + env(safe-area-inset-bottom));
+    background: var(--surface); border-top: 1px solid var(--border);
+  }
+  .select-bar .wrap { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .sel-count { flex: 1; min-width: 7em; font-weight: 600; }
+  body.selecting { padding-bottom: 96px; }
+  body.selecting .status { bottom: 84px; }
+  body.selecting .toast { bottom: 100px; }
+  body.selecting #addProjectForm { display: none; }
+  .sel-box { width: 22px; height: 22px; margin: 0; flex: none; accent-color: var(--primary); pointer-events: none; }
+  .card.selected { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+  .icon-btn.on { background: var(--surface-2); color: var(--primary); }
+  .bd-list { max-height: 40vh; overflow: auto; margin: 0 0 12px; padding-left: 20px; overflow-wrap: anywhere; }
+
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation: none !important; transition: none !important; }
   }
@@ -232,6 +249,7 @@
 <header class="top app-only">
   <div class="wrap">
     <h1>Projects</h1>
+    <button id="selectBtn" class="icon-btn" type="button" aria-label="เลือกหลายโปรเจคเพื่อลบ" title="เลือกหลายโปรเจค"><span aria-hidden="true">☑</span></button>
     <button id="refreshBtn" class="icon-btn" type="button" aria-label="โหลดข้อมูลใหม่" title="โหลดข้อมูลใหม่"><span aria-hidden="true">⟳</span></button>
     <button id="settingsBtn" class="icon-btn" type="button" aria-label="ตั้งค่า" title="ตั้งค่า"><span aria-hidden="true">⚙</span></button>
   </div>
@@ -265,6 +283,30 @@
 
 <div id="status" class="status" role="status" aria-live="polite"></div>
 <div id="toast" class="toast" role="alert" aria-live="assertive"></div>
+
+<div id="selectBar" class="select-bar app-only" hidden>
+  <div class="wrap">
+    <span id="selectCount" class="sel-count" aria-live="polite"></span>
+    <button type="button" class="btn small" id="selectAllBtn" aria-label="เลือกทั้งหมด">เลือกทั้งหมด</button>
+    <button type="button" class="btn small" id="selectCancelBtn" aria-label="ยกเลิกการเลือก">ยกเลิก</button>
+    <button type="button" class="btn small danger solid" id="selectDeleteBtn" aria-label="ลบโปรเจคที่เลือก">ลบ</button>
+  </div>
+</div>
+
+<dialog id="bulkDialog" aria-labelledby="bdTitle">
+  <form id="bulkForm" method="dialog" autocomplete="off" novalidate>
+    <h2 id="bdTitle"></h2>
+    <ul id="bdList" class="bd-list"></ul>
+    <p id="bdItems" class="muted"></p>
+    <label class="fld"><span>พิมพ์คำว่า “ลบ” เพื่อยืนยัน (ย้อนกลับไม่ได้)</span>
+      <input id="bdInput" class="field" type="text" autocomplete="off">
+    </label>
+    <div class="actions">
+      <button type="button" class="btn" id="bdCancel" aria-label="ยกเลิก">ยกเลิก</button>
+      <button type="submit" class="btn danger solid" id="bdGo" aria-label="ยืนยันลบโปรเจคที่เลือก" disabled>ลบถาวร</button>
+    </div>
+  </form>
+</dialog>
 
 <dialog id="projectDialog" aria-labelledby="pdTitle">
   <form id="projectForm" method="dialog" autocomplete="off" novalidate>
@@ -324,7 +366,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = '2026-10-01.3';
+const APP_VERSION = '2026-10-01.4';
 const API = typeof API_URL === 'string' ? API_URL.trim() : '';
 const TIMEOUT_MS = 15000;
 const LS_SESSION = 'pt_session';
@@ -426,6 +468,8 @@ const state = {
   justOpened: null,
   editing: null,          // { id, draft }
   drafts: {},             // projectId -> ข้อความที่พิมพ์ค้างในช่องเพิ่มรายการ
+  selecting: false,       // โหมดเลือกหลายโปรเจค
+  selected: new Set(),
   lastPct: new Map(),
 };
 const saveUi = () => store.set(LS_UI, { expanded: [...state.expanded], doneOpen: state.doneOpen });
@@ -699,7 +743,8 @@ function signOut(message) {
   state.session = null;
   store.del(LS_SESSION);
   store.del(LS_CACHE);
-  Object.assign(state, { projects: [], items: [], commits: {}, loaded: false, loadError: null, editing: null, drafts: {} });
+  Object.assign(state, { projects: [], items: [], commits: {}, loaded: false, loadError: null, editing: null, drafts: {}, selecting: false });
+  state.selected.clear();
   state.lastPct.clear();
   for (const d of document.querySelectorAll('dialog[open]')) d.close();
   showPinMessage(message || '', 'info');
@@ -789,6 +834,38 @@ function deleteProject(p) {
     },
     revert: () => { state.projects.push(p); state.items.push(...removedItems); },
   });
+}
+
+// ---- เลือกหลายโปรเจค ----
+function setSelecting(on) {
+  state.selecting = on;
+  state.selected.clear();
+  if (on && state.editing) finishEdit(true, false);
+  render();
+}
+function toggleSelect(pid) {
+  if (state.selected.has(pid)) state.selected.delete(pid); else state.selected.add(pid);
+  render();
+}
+function openBulkDialog() {
+  const list = state.projects.filter((p) => state.selected.has(p.id)).sort(byOrder);
+  if (!list.length) return;
+  const ids = new Set(list.map((p) => p.id));
+  const itemCount = state.items.filter((i) => ids.has(i.projectId)).length;
+  $('#bdTitle').textContent = `ลบ ${list.length} โปรเจค`;
+  $('#bdList').replaceChildren(...list.map((p) => h('li', { text: p.name })));
+  $('#bdItems').textContent = itemCount ? `รายการ checklist ในโปรเจคเหล่านี้ ${itemCount} รายการจะถูกลบด้วย` : '';
+  $('#bdInput').value = '';
+  $('#bdGo').disabled = true;
+  $('#bulkDialog').showModal();
+  $('#bdInput').focus();
+}
+function bulkDelete() {
+  const list = state.projects.filter((p) => state.selected.has(p.id));
+  $('#bulkDialog').close();
+  setSelecting(false);
+  for (const p of list) deleteProject(p);
+  if (list.length) toast(`กำลังลบ ${list.length} โปรเจค…`);
 }
 
 function moveProject(p, dir) {
@@ -953,6 +1030,21 @@ function render() {
   $('#newProjectName').disabled = !state.loaded;
   $('#addProjectBtn').disabled = !state.loaded;
 
+  // แถบเลือกหลายโปรเจค
+  for (const id of state.selected) if (!state.projects.some((p) => p.id === id)) state.selected.delete(id);
+  document.body.classList.toggle('selecting', state.selecting);
+  $('#selectBar').hidden = !state.selecting;
+  $('#selectBtn').classList.toggle('on', state.selecting);
+  $('#selectBtn').setAttribute('aria-pressed', String(state.selecting));
+  $('#selectBtn').disabled = !state.loaded || !state.projects.length;
+  const nSel = state.selected.size;
+  $('#selectCount').textContent = nSel ? `เลือก ${nSel} โปรเจค` : 'แตะการ์ดเพื่อเลือก';
+  $('#selectDeleteBtn').disabled = !nSel;
+  $('#selectDeleteBtn').textContent = nSel ? `ลบ ${nSel}` : 'ลบ';
+  const allSel = nSel > 0 && nSel === state.projects.length;
+  $('#selectAllBtn').textContent = allSel ? 'ไม่เลือกเลย' : 'เลือกทั้งหมด';
+  $('#selectAllBtn').setAttribute('aria-label', allSel ? 'ยกเลิกเลือกทั้งหมด' : 'เลือกทั้งหมด');
+
   // เก็บ focus ไว้คืนหลัง render ใหม่
   const ae = document.activeElement;
   const focus = ae && list.contains(ae) && ae.dataset.fk
@@ -971,12 +1063,13 @@ function render() {
     const done = sorted.filter((p) => stats.get(p.id).complete);
     active.forEach((p, i) => frag.append(projectCard(p, stats.get(p.id), anims, i === 0, i === active.length - 1)));
     if (done.length) {
+      const doneOpen = state.doneOpen || state.selecting;
       frag.append(h('button', {
         class: 'group-toggle', type: 'button', 'data-fk': 'group-done',
-        'aria-expanded': String(state.doneOpen), 'aria-label': `เสร็จแล้ว ${done.length} โปรเจค (กดเพื่อ${state.doneOpen ? 'ซ่อน' : 'แสดง'})`,
-        onclick: () => { state.doneOpen = !state.doneOpen; saveUi(); render(); },
+        'aria-expanded': String(doneOpen), 'aria-label': `เสร็จแล้ว ${done.length} โปรเจค (กดเพื่อ${doneOpen ? 'ซ่อน' : 'แสดง'})`,
+        onclick: () => { state.doneOpen = !doneOpen; saveUi(); render(); },
       }, h('span', { class: 'chev', 'aria-hidden': 'true', text: '▸' }), `เสร็จแล้ว (${done.length})`));
-      if (state.doneOpen) done.forEach((p, i) => frag.append(projectCard(p, stats.get(p.id), anims, i === 0, i === done.length - 1)));
+      if (doneOpen) done.forEach((p, i) => frag.append(projectCard(p, stats.get(p.id), anims, i === 0, i === done.length - 1)));
     }
   }
 
@@ -1021,7 +1114,9 @@ function emptyPanel() {
 
 function projectCard(p, s, anims, isFirst, isLast) {
   const pid = p.id;
-  const open = state.expanded.has(pid);
+  const sel = state.selecting;
+  const picked = sel && state.selected.has(pid);
+  const open = !sel && state.expanded.has(pid);
   const due = dueInfo(p.dueDate, s.complete);
 
   // progress bar: เริ่มจากค่าเดิมแล้ว animate ไปค่าใหม่
@@ -1044,21 +1139,24 @@ function projectCard(p, s, anims, isFirst, isLast) {
   const meta = metaParts.length
     ? h('div', { class: 'meta' }, metaParts.flatMap((el, i) => (i ? [' · ', el] : [el]))) : null;
 
-  const label = [p.name, s.total ? `เสร็จ ${s.pct}%` : 'ยังไม่มีรายการ', due ? due.label : '', open ? 'กดเพื่อพับ' : 'กดเพื่อกาง']
-    .filter(Boolean).join(', ');
+  const label = [p.name, s.total ? `เสร็จ ${s.pct}%` : 'ยังไม่มีรายการ', due ? due.label : '',
+    sel ? '' : open ? 'กดเพื่อพับ' : 'กดเพื่อกาง'].filter(Boolean).join(', ');
+  const activate = () => (sel ? toggleSelect(pid) : toggleCard(pid));
   const head = h('div', {
-    class: 'card-head', role: 'button', tabindex: '0', 'data-fk': 'head:' + pid,
-    'aria-expanded': String(open), 'aria-controls': open ? 'body-' + pid : null, 'aria-label': label,
-    onclick: () => toggleCard(pid),
-    onkeydown: (e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggleCard(pid); } },
+    class: 'card-head', role: sel ? 'checkbox' : 'button', tabindex: '0', 'data-fk': 'head:' + pid,
+    'aria-checked': sel ? String(picked) : null,
+    'aria-expanded': sel ? null : String(open), 'aria-controls': open ? 'body-' + pid : null, 'aria-label': label,
+    onclick: activate,
+    onkeydown: (e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); activate(); } },
   },
   h('div', { class: 'row1' },
+    sel ? h('input', { class: 'sel-box', type: 'checkbox', checked: picked, tabindex: '-1', 'aria-hidden': 'true' }) : null,
     due && due.level === 'over' ? h('span', { class: 'dot', 'aria-hidden': 'true' }) : null,
     h('span', { class: 'name', text: p.name }),
     s.total ? h('span', { class: 'pct', text: s.pct + '%' }) : null),
   bar, meta);
 
-  return h('article', { class: 'card' + (s.complete ? ' complete' : ''), 'data-pid': pid },
+  return h('article', { class: 'card' + (s.complete ? ' complete' : '') + (picked ? ' selected' : ''), 'data-pid': pid },
     head, commitLine(p, s), open ? cardBody(p, isFirst, isLast) : null);
 }
 
@@ -1269,6 +1367,21 @@ $('#addProjectForm').addEventListener('submit', (e) => {
 });
 
 $('#refreshBtn').addEventListener('click', () => { if (!state.loading) refresh(); });
+
+$('#selectBtn').addEventListener('click', () => setSelecting(!state.selecting));
+$('#selectCancelBtn').addEventListener('click', () => setSelecting(false));
+$('#selectAllBtn').addEventListener('click', () => {
+  const all = state.selected.size === state.projects.length;
+  state.selected = all ? new Set() : new Set(state.projects.map((p) => p.id));
+  render();
+});
+$('#selectDeleteBtn').addEventListener('click', openBulkDialog);
+$('#bdInput').addEventListener('input', (e) => { $('#bdGo').disabled = e.target.value.trim() !== 'ลบ'; });
+$('#bulkForm').addEventListener('submit', (e) => { e.preventDefault(); if (!$('#bdGo').disabled) bulkDelete(); });
+$('#bdCancel').addEventListener('click', () => $('#bulkDialog').close());
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && state.selecting && !document.querySelector('dialog[open]')) setSelecting(false);
+});
 
 $('#settingsBtn').addEventListener('click', () => {
   const exp = state.session && Date.parse(state.session.expiresAt);
