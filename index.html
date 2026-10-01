@@ -316,6 +316,7 @@
       <button type="button" class="btn danger" id="logoutBtn" aria-label="ออกจากระบบ">ออกจากระบบ</button>
       <button type="submit" class="btn" aria-label="ปิด">ปิด</button>
     </div>
+    <p class="muted" id="sdVersion" style="font-size:12px;margin:16px 0 0"></p>
   </form>
 </dialog>
 
@@ -323,6 +324,7 @@
 <script>
 'use strict';
 
+const APP_VERSION = '2026-10-01.3';
 const API = typeof API_URL === 'string' ? API_URL.trim() : '';
 const TIMEOUT_MS = 15000;
 const LS_SESSION = 'pt_session';
@@ -573,6 +575,7 @@ async function loadList() {
     if (pending) { reloadAfterDrain = true; return false; }
     state.projects = res.projects || [];
     state.items = res.items || [];
+    state.backendVersion = res.version || 'เก่า (ก่อน 2026-10-01.3)';
     state.loaded = true;
     state.loadError = null;
     const ids = new Set(state.projects.map((p) => p.id));
@@ -1272,6 +1275,7 @@ $('#settingsBtn').addEventListener('click', () => {
   $('#sdSession').textContent = exp
     ? `เข้าสู่ระบบอยู่ · เซสชันต่ออายุอัตโนมัติเมื่อใช้งาน (หมดอายุไม่เร็วกว่า ${fmtDateTime.format(exp)})`
     : 'เข้าสู่ระบบอยู่';
+  $('#sdVersion').textContent = `เวอร์ชันหน้าเว็บ ${APP_VERSION} · backend ${state.backendVersion || '—'}`;
   $('#settingsDialog').showModal();
 });
 $('#logoutBtn').addEventListener('click', logout);

@@ -73,6 +73,8 @@ var LOCK_SHORT_MS = 15 * 60 * 1000;
 var LOCK_LONG_MS = DAY_MS;
 var LOCK_ROUNDS_FOR_LONG = 3;
 
+var BACKEND_VERSION = '2026-10-01.3';
+
 var SCHEMA = {
   Projects: {
     headers: ['id', 'name', 'dueDate', 'note', 'repo', 'branch', 'order', 'createdAt', 'updatedAt'],
@@ -101,7 +103,7 @@ function doGet(e) {
     checkSession_(p.sessionToken);
     switch (p.action) {
       case 'list':
-        return { projects: readObjects_('Projects'), items: readObjects_('Items') };
+        return { projects: readObjects_('Projects'), items: readObjects_('Items'), version: BACKEND_VERSION };
       case 'commits':
         return { commits: getCommits_() };
       default:
