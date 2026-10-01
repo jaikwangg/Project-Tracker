@@ -39,6 +39,31 @@ function revokeAllSessions() {
   return keys.length;
 }
 
+/** ตรวจการดึง commit: รันจาก editor แล้วดู Execution log ว่าแต่ละ repo ได้ผลอะไร */
+function testGithub() {
+  var gh = PropertiesService.getScriptProperties().getProperty('GITHUB_TOKEN');
+  if (!gh) { Logger.log('✗ ยังไม่มี Script Property ชื่อ GITHUB_TOKEN (ตัวพิมพ์ใหญ่ทั้งหมด)'); return; }
+  Logger.log('GITHUB_TOKEN: มีค่า (ยาว ' + gh.length + ' ตัว, ขึ้นต้น ' + gh.slice(0, 11) + '…)');
+
+  var auth = UrlFetchApp.fetch('https://api.github.com/rate_limit', githubRequest_('x/x', '', gh.trim()));
+  Logger.log(auth.getResponseCode() === 200
+    ? '✓ token ใช้ได้ (rate limit เหลือ ' + JSON.parse(auth.getContentText()).rate.remaining + ')'
+    : '✗ token ใช้ไม่ได้: HTTP ' + auth.getResponseCode() + ' ' + auth.getContentText().slice(0, 200));
+
+  var projects = readObjects_('Projects').filter(function (p) { return p.repo; });
+  if (!projects.length) { Logger.log('✗ ยังไม่มีโปรเจคไหนใส่ repo — กด "แก้ไขโปรเจค" แล้วใส่ owner/repo'); return; }
+  projects.forEach(function (p) {
+    if (!REPO_RE.test(p.repo)) { Logger.log('✗ ' + p.name + ': repo "' + p.repo + '" รูปแบบไม่ถูก (ต้องเป็น owner/repo)'); return; }
+    var req = githubRequest_(p.repo, p.branch, gh.trim());
+    var res = UrlFetchApp.fetch(req.url, req);
+    var code = res.getResponseCode();
+    var c = parseCommit_(res);
+    Logger.log((c ? '✓ ' : '✗ ') + p.name + ' (' + p.repo + (p.branch ? '@' + p.branch : '') + '): HTTP ' + code +
+      (c ? ' — ' + c.message.slice(0, 60) : ' — ' + res.getContentText().slice(0, 150)));
+  });
+  Logger.log('หมายเหตุ: ผลในเว็บ cache ไว้ 2–10 นาที แก้แล้วรอสักครู่หรือกด ⟳');
+}
+
 var SESSION_PREFIX = 'sess_';
 var DAY_MS = 24 * 60 * 60 * 1000;
 var SESSION_TTL_MS = 30 * DAY_MS;
@@ -112,7 +137,7 @@ var POST_ACTIONS = {
   addItem: addItem_,
   updateItem: updateItem_,
   deleteItem: deleteItem_,
-  seed: seed_,
+  syncGithub: syncGithub_,
 };
 
 function respond_(fn) {
@@ -446,24 +471,84 @@ function reorderProjects_(data) {
   return { updated: changed };
 }
 
-function seed_(data) {
-  if (!Array.isArray(data.names) || !data.names.length) throw new Error('ต้องระบุ names');
-  if (data.names.length > 50) throw new Error('ใส่ได้ไม่เกิน 50 โปรเจค');
-  var t = table_('Projects');
-  if (t.rows.some(function (r) { return r[t.col.id] !== ''; })) {
-    throw new Error('มีโปรเจคอยู่แล้ว — seed ใช้ได้เฉพาะตอนยังไม่มีโปรเจค');
+/**
+ * ซิงก์รายชื่อโปรเจคกับ repo ที่ GITHUB_TOKEN เข้าถึงได้
+ * data.dryRun        true = แค่คืนรายการที่จะเปลี่ยน ไม่เขียนจริง
+ * data.removeUnlinked true = ลบโปรเจคที่ไม่ได้ผูก repo และยังไม่มีรายการ checklist
+ */
+function syncGithub_(data) {
+  var repos = listGithubRepos_();
+  var pt = table_('Projects');
+  var projects = pt.rows.filter(function (r) { return r[pt.col.id] !== ''; })
+    .map(function (r) { return toObj_(pt, r); });
+
+  var linked = {};
+  projects.forEach(function (p) { if (p.repo) linked[p.repo.toLowerCase()] = true; });
+  var toAdd = repos.filter(function (r) { return !linked[r.fullName.toLowerCase()]; });
+
+  var toRemove = [];
+  if (data.removeUnlinked) {
+    var it = table_('Items');
+    var hasItems = {};
+    it.rows.forEach(function (r) { hasItems[String(r[it.col.projectId])] = true; });
+    toRemove = projects.filter(function (p) { return !p.repo && !hasItems[p.id]; });
   }
-  var ts = now_();
-  var projects = data.names.map(function (n, k) {
-    return {
-      id: Utilities.getUuid(),
-      name: cleanStr_(n, 'ชื่อโปรเจค', LIMITS.name, true),
-      dueDate: '', note: '', repo: '', branch: '',
-      order: k, createdAt: ts, updatedAt: ts,
-    };
-  });
-  appendRows_(t, projects);
-  return projects;
+
+  var summary = {
+    add: toAdd.map(function (r) { return r.fullName; }),
+    remove: toRemove.map(function (p) { return p.name; }),
+    totalRepos: repos.length,
+  };
+  if (data.dryRun) return summary;
+
+  if (toRemove.length) {
+    var ids = {};
+    toRemove.forEach(function (p) { ids[p.id] = true; });
+    var idx = [];
+    pt.rows.forEach(function (r, k) { if (ids[String(r[pt.col.id])]) idx.push(k); });
+    deleteRowIndexes_(pt, idx);
+  }
+  if (toAdd.length) {
+    pt = table_('Projects');
+    var order = maxOrder_(pt);
+    var ts = now_();
+    appendRows_(pt, toAdd.map(function (r) {
+      return {
+        id: Utilities.getUuid(),
+        name: r.name.slice(0, LIMITS.name),
+        dueDate: '',
+        note: r.description.slice(0, LIMITS.note),
+        repo: r.fullName,
+        branch: '',
+        order: ++order,
+        createdAt: ts,
+        updatedAt: ts,
+      };
+    }));
+  }
+  return summary;
+}
+
+/** repo ทั้งหมดที่ token เข้าถึงได้ (ไม่รวม archived) เรียงตาม push ล่าสุด */
+function listGithubRepos_() {
+  var gh = (PropertiesService.getScriptProperties().getProperty('GITHUB_TOKEN') || '').trim();
+  if (!gh) throw new Error('ยังไม่ได้ตั้งค่า GITHUB_TOKEN ใน Script Properties');
+  var repos = [];
+  for (var page = 1; page <= 10; page++) {
+    var req = githubRequest_('x/x', '', gh);
+    var res = UrlFetchApp.fetch('https://api.github.com/user/repos?per_page=100&sort=pushed&page=' + page, req);
+    var code = res.getResponseCode();
+    if (code !== 200) {
+      throw new Error('ดึงรายชื่อ repo จาก GitHub ไม่สำเร็จ (HTTP ' + code + ') — ตรวจ GITHUB_TOKEN ด้วย testGithub()');
+    }
+    var list = JSON.parse(res.getContentText());
+    list.forEach(function (r) {
+      if (r.archived) return;
+      repos.push({ fullName: r.full_name, name: r.name, description: r.description || '' });
+    });
+    if (list.length < 100) break;
+  }
+  return repos;
 }
 
 // ---------------------------------------------------------------------------
@@ -518,7 +603,7 @@ function getCommits_() {
   var projects = readObjects_('Projects').filter(function (p) { return p.repo; });
   var result = {};
   if (!projects.length) return result;
-  var ghToken = PropertiesService.getScriptProperties().getProperty('GITHUB_TOKEN');
+  var ghToken = (PropertiesService.getScriptProperties().getProperty('GITHUB_TOKEN') || '').trim();
   if (!ghToken) throw new Error('ยังไม่ได้ตั้งค่า GITHUB_TOKEN ใน Script Properties');
 
   var keyOf = function (p) { return 'gh:' + p.repo.toLowerCase() + '@' + p.branch; };

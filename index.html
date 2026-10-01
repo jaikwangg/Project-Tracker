@@ -308,6 +308,10 @@
   <form method="dialog">
     <h2 id="sdTitle">ตั้งค่า</h2>
     <p class="muted" id="sdSession"></p>
+    <div class="fld">
+      <button type="button" class="btn" id="syncBtn" data-sync aria-label="ซิงก์โปรเจคจาก GitHub">ซิงก์โปรเจคจาก GitHub</button>
+      <small>เพิ่มโปรเจคจาก repo ที่ GITHUB_TOKEN เข้าถึงได้ และลบโปรเจคที่ไม่ได้ผูก repo ซึ่งยังไม่มีรายการ (แสดงให้ยืนยันก่อน)</small>
+    </div>
     <div class="actions" style="justify-content:space-between">
       <button type="button" class="btn danger" id="logoutBtn" aria-label="ออกจากระบบ">ออกจากระบบ</button>
       <button type="submit" class="btn" aria-label="ปิด">ปิด</button>
@@ -324,10 +328,6 @@ const TIMEOUT_MS = 15000;
 const LS_SESSION = 'pt_session';
 const LS_CACHE = 'pt_cache';
 const LS_UI = 'pt_ui';
-const SEED_NAMES = [
-  'VMS', 'Storage', 'Deploy VMS', 'Budget', 'Chaba-Bot', 'SA_PMS', 'KPP_PMS',
-  'เปลี่ยน Antivirus (แทน Symantec)', 'ย้าย Web app ไป Docker', 'วิเคราะห์ LINE log', 'Vendor contract audit log',
-];
 const MSG = {
   timeout: 'เซิร์ฟเวอร์ตอบช้าเกินไป (เกิน 15 วินาที) — ลองใหม่อีกครั้ง',
   network: 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ — ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่',
@@ -845,8 +845,37 @@ function deleteItem(it) {
   if (hadFocus) focusKey('add:' + it.projectId);
 }
 
-function seed() {
-  mutate({ action: 'seed', data: { names: SEED_NAMES }, done: () => { reloadAfterDrain = true; } });
+/** ดึงรายชื่อ repo จาก GitHub → แสดงสิ่งที่จะเปลี่ยน → ยืนยัน → เขียนจริง */
+let syncing = false;
+async function syncFromGithub() {
+  if (syncing) return;
+  syncing = true;
+  for (const b of document.querySelectorAll('[data-sync]')) b.disabled = true;
+  setStatus('saving');
+  try {
+    await queue;
+    const preview = (await call('POST', 'syncGithub', { dryRun: true, removeUnlinked: true })).data;
+    if (!preview.add.length && !preview.remove.length) {
+      setStatus('saved');
+      toast(`โปรเจคตรงกับ GitHub แล้ว (${preview.totalRepos} repo)`);
+      return;
+    }
+    const list = (arr) => arr.slice(0, 15).map((x) => '  • ' + x).join('\n') + (arr.length > 15 ? `\n  …และอีก ${arr.length - 15}` : '');
+    const lines = [];
+    if (preview.add.length) lines.push(`เพิ่ม ${preview.add.length} โปรเจคจาก GitHub:\n${list(preview.add)}`);
+    if (preview.remove.length) lines.push(`ลบ ${preview.remove.length} โปรเจคที่ไม่ได้ผูก GitHub (และยังไม่มีรายการ):\n${list(preview.remove)}`);
+    if (!confirm(lines.join('\n\n') + '\n\nดำเนินการเลยไหม?')) { $('#status').classList.remove('show'); return; }
+    const res = (await call('POST', 'syncGithub', { dryRun: false, removeUnlinked: true })).data;
+    setStatus('saved');
+    toast(`เพิ่ม ${res.add.length} · ลบ ${res.remove.length} โปรเจค`);
+    $('#settingsDialog').close();
+    refresh();
+  } catch (e) {
+    if (e.code !== 'unauthorized') { setStatus('error'); toast(e.message); }
+  } finally {
+    syncing = false;
+    for (const b of document.querySelectorAll('[data-sync]')) b.disabled = false;
+  }
 }
 
 // ---- inline edit ----
@@ -980,10 +1009,10 @@ function errorPanel(err) {
 
 function emptyPanel() {
   return h('div', { class: 'card panel' },
-    h('p', { class: 'muted', text: 'ยังไม่มีโปรเจค — พิมพ์ชื่อด้านบนเพื่อเพิ่ม หรือเริ่มจากชุดโปรเจคตั้งต้น' }),
+    h('p', { class: 'muted', text: 'ยังไม่มีโปรเจค — ดึงจาก repo ใน GitHub หรือพิมพ์ชื่อด้านบนเพื่อเพิ่มเอง' }),
     h('button', {
-      class: 'btn primary', type: 'button', 'aria-label': 'ใส่โปรเจคเริ่มต้น', text: 'ใส่โปรเจคเริ่มต้น',
-      disabled: pending > 0, onclick: seed,
+      class: 'btn primary', type: 'button', 'aria-label': 'ดึงโปรเจคจาก GitHub', text: 'ดึงโปรเจคจาก GitHub',
+      'data-sync': true, disabled: syncing, onclick: syncFromGithub,
     }));
 }
 
@@ -1201,8 +1230,13 @@ $('#pdDelete').addEventListener('click', () => {
   $('#pdDeleteConfirm').hidden = false;
   $('#pdDeleteInput').focus();
 });
+// NFKC รวม "ํ"+"า" เป็น "ำ" ให้พิมพ์ไทยจากคีย์บอร์ดต่างกันยังตรงกัน
+const sameName = (a, b) => {
+  const norm = (s) => String(s || '').normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
+  return norm(a) === norm(b);
+};
 $('#pdDeleteInput').addEventListener('input', (e) => {
-  $('#pdDeleteGo').disabled = !dialogProject || e.target.value.trim() !== dialogProject.name.trim();
+  $('#pdDeleteGo').disabled = !dialogProject || !sameName(e.target.value, dialogProject.name);
 });
 $('#pdDeleteInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); if (!$('#pdDeleteGo').disabled) $('#pdDeleteGo').click(); }
@@ -1241,6 +1275,7 @@ $('#settingsBtn').addEventListener('click', () => {
   $('#settingsDialog').showModal();
 });
 $('#logoutBtn').addEventListener('click', logout);
+$('#syncBtn').addEventListener('click', syncFromGithub);
 
 $('#pinInput').addEventListener('input', (e) => {
   const digits = e.target.value.replace(/\D/g, '').slice(0, 6);
