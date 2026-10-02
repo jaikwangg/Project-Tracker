@@ -91,12 +91,12 @@ var LOCK_SHORT_MS = 15 * 60 * 1000;
 var LOCK_LONG_MS = DAY_MS;
 var LOCK_ROUNDS_FOR_LONG = 3;
 
-var BACKEND_VERSION = '2026-10-01.3';
+var BACKEND_VERSION = '2026-10-01.6';
 
 var SCHEMA = {
   Projects: {
-    headers: ['id', 'name', 'dueDate', 'note', 'repo', 'branch', 'order', 'createdAt', 'updatedAt'],
-    text: ['id', 'name', 'dueDate', 'note', 'repo', 'branch', 'createdAt', 'updatedAt'],
+    headers: ['id', 'name', 'dueDate', 'note', 'repo', 'branch', 'order', 'createdAt', 'updatedAt', 'group'],
+    text: ['id', 'name', 'dueDate', 'note', 'repo', 'branch', 'createdAt', 'updatedAt', 'group'],
   },
   Items: {
     headers: ['id', 'projectId', 'text', 'done', 'order', 'createdAt', 'updatedAt'],
@@ -104,7 +104,7 @@ var SCHEMA = {
   },
 };
 
-var LIMITS = { name: 100, text: 300, note: 1000, branch: 100 };
+var LIMITS = { name: 100, text: 300, note: 1000, branch: 100, group: 50 };
 var REPO_RE = /^[\w.-]+\/[\w.-]+$/;
 var BRANCH_RE = /^[\w./-]+$/;
 var DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -309,10 +309,21 @@ function table_(name) {
   var headers = values[0].map(String);
   var col = {};
   headers.forEach(function (h, i) { col[h] = i; });
-  SCHEMA[name].headers.forEach(function (h) {
-    if (!(h in col)) throw new Error('แผ่น ' + name + ' ไม่มีคอลัมน์ ' + h);
-  });
-  return { name: name, sh: sh, headers: headers, col: col, rows: values.slice(1) };
+  var rows = values.slice(1);
+
+  // คอลัมน์ใหม่ที่ชีตเดิมยังไม่มี (เช่น group) → เติม header ต่อท้ายให้อัตโนมัติ
+  var missing = SCHEMA[name].headers.filter(function (h) { return !(h in col); });
+  if (missing.length) {
+    var start = headers.length + 1;
+    sh.getRange(1, start, 1, missing.length).setValues([missing]).setFontWeight('bold');
+    missing.forEach(function (h, k) {
+      col[h] = headers.length + k;
+      if (SCHEMA[name].text.indexOf(h) >= 0) sh.getRange(1, start + k, sh.getMaxRows(), 1).setNumberFormat('@');
+    });
+    headers = headers.concat(missing);
+    rows = rows.map(function (r) { return r.concat(missing.map(function () { return ''; })); });
+  }
+  return { name: name, sh: sh, headers: headers, col: col, rows: rows };
 }
 
 function normValue_(key, v) {
@@ -402,6 +413,7 @@ function cleanProjectFields_(data, isNew) {
   var out = {};
   if (isNew || 'name' in data) out.name = cleanStr_(data.name, 'ชื่อโปรเจค', LIMITS.name, true);
   if (isNew || 'note' in data) out.note = cleanStr_(data.note, 'โน้ต', LIMITS.note, false);
+  if (isNew || 'group' in data) out.group = cleanStr_(data.group, 'กลุ่ม', LIMITS.group, false);
   if (isNew || 'dueDate' in data) {
     var d = cleanStr_(data.dueDate, 'วันกำหนด', 10, false);
     if (d && !DATE_RE.test(d)) throw new Error('วันกำหนดต้องเป็นรูปแบบ YYYY-MM-DD');
@@ -435,6 +447,7 @@ function addProject_(data) {
     note: fields.note,
     repo: fields.repo,
     branch: fields.branch,
+    group: fields.group,
     order: maxOrder_(t) + 1,
     createdAt: ts,
     updatedAt: ts,
@@ -540,6 +553,7 @@ function syncGithub_(data) {
         note: r.description.slice(0, LIMITS.note),
         repo: r.fullName,
         branch: '',
+        group: '',
         order: ++order,
         createdAt: ts,
         updatedAt: ts,

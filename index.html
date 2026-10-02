@@ -99,6 +99,9 @@
   @media (hover: none) { .btn.small { min-height: 44px; } }
 
   .add-form { display: flex; gap: 8px; margin: 16px 0; }
+  .toolbar { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin: -4px 0 12px; font-size: 14px; color: var(--muted); }
+  .sort-sel { width: auto; min-height: 36px; padding: 4px 8px; font-size: 14px; color: var(--text); }
+  @media (hover: none) { .sort-sel { min-height: 44px; } }
 
   /* cards */
   .card {
@@ -237,6 +240,14 @@
   .sel-box { width: 22px; height: 22px; margin: 0; flex: none; accent-color: var(--primary); pointer-events: none; }
   .card.selected { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
   .icon-btn.on { background: var(--surface-2); color: var(--primary); }
+  .grp-head {
+    display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px;
+    margin: 14px 0 6px; padding: 0 4px; border: 0; background: none; cursor: pointer; text-align: left;
+    font-size: 15px; font-weight: 700;
+  }
+  .grp-head:first-child { margin-top: 0; }
+  .grp-head .grp-count { color: var(--muted); font-weight: 500; font-size: 13px; }
+  .grp-head[aria-expanded="true"] .chev { transform: rotate(90deg); }
   .bd-list { max-height: 40vh; overflow: auto; margin: 0 0 12px; padding-left: 20px; overflow-wrap: anywhere; }
 
   @media (prefers-reduced-motion: reduce) {
@@ -260,6 +271,13 @@
     <input id="newProjectName" class="field" type="text" maxlength="100" placeholder="ชื่อโปรเจคใหม่…" aria-label="ชื่อโปรเจคใหม่" enterkeyhint="done">
     <button id="addProjectBtn" class="btn primary" type="submit" aria-label="เพิ่มโปรเจค">เพิ่ม</button>
   </form>
+  <div class="toolbar">
+    <label for="sortSel">เรียงตาม</label>
+    <select id="sortSel" class="field sort-sel">
+      <option value="order">ลำดับที่ตั้งเอง</option>
+      <option value="commit">commit ล่าสุด</option>
+    </select>
+  </div>
   <div id="list" aria-live="polite" aria-busy="false"></div>
 </main>
 
@@ -288,10 +306,26 @@
   <div class="wrap">
     <span id="selectCount" class="sel-count" aria-live="polite"></span>
     <button type="button" class="btn small" id="selectAllBtn" aria-label="เลือกทั้งหมด">เลือกทั้งหมด</button>
+    <button type="button" class="btn small" id="selectGroupBtn" aria-label="ย้ายโปรเจคที่เลือกไปกลุ่ม">ย้ายกลุ่ม</button>
     <button type="button" class="btn small" id="selectCancelBtn" aria-label="ยกเลิกการเลือก">ยกเลิก</button>
     <button type="button" class="btn small danger solid" id="selectDeleteBtn" aria-label="ลบโปรเจคที่เลือก">ลบ</button>
   </div>
 </div>
+
+<datalist id="groupList"></datalist>
+
+<dialog id="groupDialog" aria-labelledby="gdTitle">
+  <form id="groupForm" method="dialog" autocomplete="off" novalidate>
+    <h2 id="gdTitle"></h2>
+    <label class="fld"><span>ชื่อกลุ่ม</span>
+      <input id="gdInput" class="field" type="text" maxlength="50" list="groupList" placeholder="เว้นว่าง = เอาออกจากกลุ่ม">
+    </label>
+    <div class="actions">
+      <button type="button" class="btn" id="gdCancel" aria-label="ยกเลิก">ยกเลิก</button>
+      <button type="submit" class="btn primary" aria-label="ย้ายกลุ่ม">ย้าย</button>
+    </div>
+  </form>
+</dialog>
 
 <dialog id="bulkDialog" aria-labelledby="bdTitle">
   <form id="bulkForm" method="dialog" autocomplete="off" novalidate>
@@ -314,9 +348,15 @@
     <label class="fld"><span>ชื่อโปรเจค</span>
       <input id="pdName" class="field" type="text" maxlength="100" required>
     </label>
-    <label class="fld"><span>วันกำหนดเสร็จ</span>
-      <input id="pdDue" class="field" type="date">
-    </label>
+    <div class="two">
+      <label class="fld"><span>กลุ่ม</span>
+        <input id="pdGroup" class="field" type="text" maxlength="50" list="groupList" placeholder="ไม่มีกลุ่ม">
+        <small>พิมพ์ชื่อใหม่หรือเลือกกลุ่มที่มีอยู่</small>
+      </label>
+      <label class="fld"><span>วันกำหนดเสร็จ</span>
+        <input id="pdDue" class="field" type="date">
+      </label>
+    </div>
     <label class="fld"><span>โน้ต</span>
       <textarea id="pdNote" class="field" maxlength="1000" rows="3"></textarea>
     </label>
@@ -366,7 +406,7 @@
 <script>
 'use strict';
 
-const APP_VERSION = '2026-10-01.4';
+const APP_VERSION = '2026-10-01.6';
 const API = typeof API_URL === 'string' ? API_URL.trim() : '';
 const TIMEOUT_MS = 15000;
 const LS_SESSION = 'pt_session';
@@ -465,6 +505,8 @@ const state = {
   loaded: false, loading: false, loadError: null, lastLoad: 0,
   expanded: new Set(Array.isArray(ui.expanded) ? ui.expanded : []),
   doneOpen: !!ui.doneOpen,
+  sortBy: ui.sortBy === 'commit' ? 'commit' : 'order',
+  collapsedGroups: new Set(Array.isArray(ui.collapsedGroups) ? ui.collapsedGroups : []),
   justOpened: null,
   editing: null,          // { id, draft }
   drafts: {},             // projectId -> ข้อความที่พิมพ์ค้างในช่องเพิ่มรายการ
@@ -472,7 +514,28 @@ const state = {
   selected: new Set(),
   lastPct: new Map(),
 };
-const saveUi = () => store.set(LS_UI, { expanded: [...state.expanded], doneOpen: state.doneOpen });
+const saveUi = () => store.set(LS_UI, {
+  expanded: [...state.expanded], doneOpen: state.doneOpen, sortBy: state.sortBy, collapsedGroups: [...state.collapsedGroups],
+});
+
+const groupOf = (p) => (p.group || '').trim();
+/** backend เก่า (ก่อนมีคอลัมน์ group) จะไม่ส่ง field group มาเลย */
+const groupsSupported = () => !state.projects.length || state.projects.some((p) => 'group' in p);
+const MSG_NEED_DEPLOY = 'ต้อง deploy Apps Script เวอร์ชันใหม่ก่อนจึงจะใช้กลุ่มได้';
+function allGroups() {
+  return [...new Set(state.projects.map(groupOf).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'th'));
+}
+function fillGroupList() {
+  $('#groupList').replaceChildren(...allGroups().map((g) => h('option', { value: g })));
+}
+
+/** เรียงตาม order หรือ commit ล่าสุด (ใหม่ก่อน; ไม่มี commit ไว้ท้ายตาม order) */
+function sortProjects(list) {
+  const arr = list.slice().sort(byOrder);
+  if (state.sortBy !== 'commit') return arr;
+  const t = (p) => { const c = state.commits[p.id]; return (c && Date.parse(c.date)) || 0; };
+  return arr.sort((a, b) => t(b) - t(a));
+}
 function saveCache() {
   if (!state.session || pending || !state.loaded) return;
   store.set(LS_CACHE, { projects: state.projects, items: state.items, commits: state.commits, ts: Date.now() });
@@ -871,7 +934,9 @@ function bulkDelete() {
 function moveProject(p, dir) {
   const stats = statsMap();
   const all = state.projects.slice().sort(byOrder);
-  const group = all.filter((x) => stats.get(x.id).complete === stats.get(p.id).complete);
+  const done = stats.get(p.id).complete;
+  // เลื่อนได้เฉพาะภายในส่วนเดียวกันที่แสดงอยู่ (กลุ่มเดียวกัน และสถานะเสร็จ/ไม่เสร็จเดียวกัน)
+  const group = all.filter((x) => stats.get(x.id).complete === done && (done || groupOf(x) === groupOf(p)));
   const neighbor = group[group.indexOf(p) + dir];
   if (!neighbor) return;
   const prev = new Map(all.map((x) => [x, x.order]));
@@ -1040,6 +1105,7 @@ function render() {
   const nSel = state.selected.size;
   $('#selectCount').textContent = nSel ? `เลือก ${nSel} โปรเจค` : 'แตะการ์ดเพื่อเลือก';
   $('#selectDeleteBtn').disabled = !nSel;
+  $('#selectGroupBtn').disabled = !nSel;
   $('#selectDeleteBtn').textContent = nSel ? `ลบ ${nSel}` : 'ลบ';
   const allSel = nSel > 0 && nSel === state.projects.length;
   $('#selectAllBtn').textContent = allSel ? 'ไม่เลือกเลย' : 'เลือกทั้งหมด';
@@ -1058,10 +1124,37 @@ function render() {
     frag.append(emptyPanel());
   } else {
     const stats = statsMap();
-    const sorted = state.projects.slice().sort(byOrder);
+    const sorted = sortProjects(state.projects);
     const active = sorted.filter((p) => !stats.get(p.id).complete);
     const done = sorted.filter((p) => stats.get(p.id).complete);
-    active.forEach((p, i) => frag.append(projectCard(p, stats.get(p.id), anims, i === 0, i === active.length - 1)));
+    const appendCards = (list) => list.forEach((p, i) => frag.append(projectCard(p, stats.get(p.id), anims, i === 0, i === list.length - 1)));
+    if (state.projects.some(groupOf)) {
+      // แยกเป็นกลุ่ม (เรียงชื่อกลุ่ม, "ไม่มีกลุ่ม" ไว้ท้าย) — โปรเจคที่เสร็จแล้วยังรวมอยู่ด้านล่างเหมือนเดิม
+      const byGroup = new Map();
+      for (const p of active) {
+        const g = groupOf(p);
+        if (!byGroup.has(g)) byGroup.set(g, []);
+        byGroup.get(g).push(p);
+      }
+      const keys = [...byGroup.keys()].sort((a, b) => (!a) - (!b) || a.localeCompare(b, 'th'));
+      for (const g of keys) {
+        const list = byGroup.get(g);
+        const open = state.selecting || !state.collapsedGroups.has(g);
+        const title = g || 'ไม่มีกลุ่ม';
+        frag.append(h('button', {
+          class: 'grp-head', type: 'button', 'data-fk': 'grp:' + g, 'aria-expanded': String(open),
+          'aria-label': `กลุ่ม ${title} ${list.length} โปรเจค (กดเพื่อ${open ? 'พับ' : 'กาง'})`,
+          onclick: () => {
+            if (state.collapsedGroups.has(g)) state.collapsedGroups.delete(g); else state.collapsedGroups.add(g);
+            saveUi();
+            render();
+          },
+        }, h('span', { class: 'chev', 'aria-hidden': 'true', text: '▸' }), title, h('span', { class: 'grp-count', text: `(${list.length})` })));
+        if (open) appendCards(list);
+      }
+    } else {
+      appendCards(active);
+    }
     if (done.length) {
       const doneOpen = state.doneOpen || state.selecting;
       frag.append(h('button', {
@@ -1215,8 +1308,11 @@ function cardBody(p, isFirst, isLast) {
     items.length ? h('ul', { class: 'checklist', 'aria-label': 'รายการของ ' + p.name }, items.map(itemRow)) : null,
     addInput,
     h('div', { class: 'body-foot' },
-      h('button', { class: 'btn small', type: 'button', 'aria-label': 'เลื่อนโปรเจคขึ้น', title: 'เลื่อนขึ้น', 'data-fk': 'up:' + pid, disabled: isFirst, text: '↑', onclick: () => moveProject(p, -1) }),
-      h('button', { class: 'btn small', type: 'button', 'aria-label': 'เลื่อนโปรเจคลง', title: 'เลื่อนลง', 'data-fk': 'down:' + pid, disabled: isLast, text: '↓', onclick: () => moveProject(p, 1) }),
+      // ↑↓ ใช้ได้เฉพาะตอนเรียงตามลำดับที่ตั้งเอง
+      state.sortBy === 'order' ? [
+        h('button', { class: 'btn small', type: 'button', 'aria-label': 'เลื่อนโปรเจคขึ้น', title: 'เลื่อนขึ้น', 'data-fk': 'up:' + pid, disabled: isFirst, text: '↑', onclick: () => moveProject(p, -1) }),
+        h('button', { class: 'btn small', type: 'button', 'aria-label': 'เลื่อนโปรเจคลง', title: 'เลื่อนลง', 'data-fk': 'down:' + pid, disabled: isLast, text: '↓', onclick: () => moveProject(p, 1) }),
+      ] : null,
       h('button', { class: 'btn small', type: 'button', 'aria-label': 'แก้ไขโปรเจค ' + p.name, 'data-fk': 'edit-p:' + pid, text: 'แก้ไขโปรเจค', onclick: () => openProjectDialog(p) })));
 }
 
@@ -1290,6 +1386,8 @@ let dialogProject = null;
 function openProjectDialog(p) {
   dialogProject = p;
   $('#pdName').value = p.name;
+  $('#pdGroup').value = groupOf(p);
+  fillGroupList();
   $('#pdDue').value = p.dueDate || '';
   $('#pdNote').value = p.note || '';
   $('#pdRepo').value = p.repo || '';
@@ -1309,6 +1407,7 @@ function saveProjectDialog() {
   if (!p) return;
   const vals = {
     name: $('#pdName').value.trim(),
+    group: $('#pdGroup').value.trim(),
     dueDate: $('#pdDue').value,
     note: $('#pdNote').value.trim(),
     repo: normalizeRepo($('#pdRepo').value),
@@ -1316,7 +1415,8 @@ function saveProjectDialog() {
   };
   const err = !vals.name ? 'กรุณาใส่ชื่อโปรเจค'
     : vals.repo && !/^[\w.-]+\/[\w.-]+$/.test(vals.repo) ? 'repo ต้องอยู่ในรูปแบบ owner/repo'
-    : vals.branch && !/^[\w./-]+$/.test(vals.branch) ? 'ชื่อ branch ไม่ถูกต้อง' : '';
+    : vals.branch && !/^[\w./-]+$/.test(vals.branch) ? 'ชื่อ branch ไม่ถูกต้อง'
+    : vals.group !== groupOf(p) && !groupsSupported() ? MSG_NEED_DEPLOY : '';
   if (err) { $('#pdErr').textContent = err; return; }
   const changes = {};
   for (const [k, v] of Object.entries(vals)) if ((p[k] || '') !== v) changes[k] = v;
@@ -1368,6 +1468,13 @@ $('#addProjectForm').addEventListener('submit', (e) => {
 
 $('#refreshBtn').addEventListener('click', () => { if (!state.loading) refresh(); });
 
+$('#sortSel').value = state.sortBy;
+$('#sortSel').addEventListener('change', (e) => {
+  state.sortBy = e.target.value === 'commit' ? 'commit' : 'order';
+  saveUi();
+  render();
+});
+
 $('#selectBtn').addEventListener('click', () => setSelecting(!state.selecting));
 $('#selectCancelBtn').addEventListener('click', () => setSelecting(false));
 $('#selectAllBtn').addEventListener('click', () => {
@@ -1376,6 +1483,26 @@ $('#selectAllBtn').addEventListener('click', () => {
   render();
 });
 $('#selectDeleteBtn').addEventListener('click', openBulkDialog);
+$('#selectGroupBtn').addEventListener('click', () => {
+  if (!state.selected.size) return;
+  if (!groupsSupported()) { toast(MSG_NEED_DEPLOY); return; }
+  $('#gdTitle').textContent = `ย้าย ${state.selected.size} โปรเจคไปกลุ่ม`;
+  $('#gdInput').value = '';
+  fillGroupList();
+  $('#groupDialog').showModal();
+  $('#gdInput').focus();
+});
+$('#groupForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const g = $('#gdInput').value.trim().slice(0, 50);
+  const list = state.projects.filter((p) => state.selected.has(p.id) && groupOf(p) !== g);
+  $('#groupDialog').close();
+  setSelecting(false);
+  if (g) state.collapsedGroups.delete(g);
+  for (const p of list) updateProject(p, { group: g });
+  if (list.length) toast(g ? `ย้าย ${list.length} โปรเจคไปกลุ่ม “${g}”` : `เอา ${list.length} โปรเจคออกจากกลุ่ม`);
+});
+$('#gdCancel').addEventListener('click', () => $('#groupDialog').close());
 $('#bdInput').addEventListener('input', (e) => { $('#bdGo').disabled = e.target.value.trim() !== 'ลบ'; });
 $('#bulkForm').addEventListener('submit', (e) => { e.preventDefault(); if (!$('#bdGo').disabled) bulkDelete(); });
 $('#bdCancel').addEventListener('click', () => $('#bulkDialog').close());
