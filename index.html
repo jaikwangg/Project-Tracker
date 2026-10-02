@@ -250,6 +250,15 @@
   .grp-head[aria-expanded="true"] .chev { transform: rotate(90deg); }
   .bd-list { max-height: 40vh; overflow: auto; margin: 0 0 12px; padding-left: 20px; overflow-wrap: anywhere; }
 
+  /* เลือก repo ตอนซิงก์ */
+  .sy-list { max-height: 45vh; overflow: auto; margin: 0 0 14px; border: 1px solid var(--border); border-radius: 10px; }
+  .sy-sec { padding: 10px 12px 4px; font-size: 13px; font-weight: 600; color: var(--muted); cursor: default; }
+  details > .sy-sec { cursor: pointer; }
+  .sy-row { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 6px 12px; cursor: pointer; overflow-wrap: anywhere; }
+  .sy-row[hidden] { display: none; }
+  .sy-row:hover { background: var(--surface-2); }
+  .sy-row input { width: 20px; height: 20px; margin: 0; flex: none; accent-color: var(--primary); }
+
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation: none !important; transition: none !important; }
   }
@@ -342,6 +351,22 @@
   </form>
 </dialog>
 
+<dialog id="syncDialog" aria-labelledby="syTitle">
+  <form id="syncForm" method="dialog" autocomplete="off" novalidate>
+    <h2 id="syTitle">เลือก repo ที่จะ track</h2>
+    <p id="syInfo" class="muted" style="margin:-8px 0 12px;font-size:14px"></p>
+    <input id="sySearch" class="field" type="search" placeholder="ค้นหา repo…" aria-label="ค้นหา repo" spellcheck="false" autocapitalize="off" style="margin-bottom:8px">
+    <div id="syList" class="sy-list"></div>
+    <label class="fld" id="syGroupFld"><span>ใส่ในกลุ่ม</span>
+      <input id="syGroup" class="field" type="text" maxlength="50" list="groupList" placeholder="ไม่มีกลุ่ม">
+    </label>
+    <div class="actions">
+      <button type="button" class="btn" id="syCancel" aria-label="ยกเลิก">ยกเลิก</button>
+      <button type="submit" class="btn primary" id="syGo"></button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="projectDialog" aria-labelledby="pdTitle">
   <form id="projectForm" method="dialog" autocomplete="off" novalidate>
     <h2 id="pdTitle">แก้ไขโปรเจค</h2>
@@ -392,7 +417,7 @@
     <p class="muted" id="sdSession"></p>
     <div class="fld">
       <button type="button" class="btn" id="syncBtn" data-sync aria-label="ซิงก์โปรเจคจาก GitHub">ซิงก์โปรเจคจาก GitHub</button>
-      <small>เพิ่มโปรเจคจาก repo ที่ GITHUB_TOKEN เข้าถึงได้ และลบโปรเจคที่ไม่ได้ผูก repo ซึ่งยังไม่มีรายการ (แสดงให้ยืนยันก่อน)</small>
+      <small>แสดง repo ที่ GITHUB_TOKEN เข้าถึงได้แต่ยังไม่ได้เพิ่ม ให้ติ๊กเลือกเฉพาะที่ต้องการ track · repo ที่ไม่ได้เลือกจะถูกย้ายไป “เคยข้ามไว้” ในรอบหน้า</small>
     </div>
     <div class="actions" style="justify-content:space-between">
       <button type="button" class="btn danger" id="logoutBtn" aria-label="ออกจากระบบ">ออกจากระบบ</button>
@@ -406,12 +431,13 @@
 <script>
 'use strict';
 
-const APP_VERSION = '2026-10-01.6';
+const APP_VERSION = '2026-10-02.1';
 const API = typeof API_URL === 'string' ? API_URL.trim() : '';
 const TIMEOUT_MS = 15000;
 const LS_SESSION = 'pt_session';
 const LS_CACHE = 'pt_cache';
 const LS_UI = 'pt_ui';
+const LS_SEEN = 'pt_seen_repos';   // repo (lowercase) ที่เคยแสดงในหน้าซิงก์แล้วไม่ได้เลือก
 const MSG = {
   timeout: 'เซิร์ฟเวอร์ตอบช้าเกินไป (เกิน 15 วินาที) — ลองใหม่อีกครั้ง',
   network: 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ — ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่',
@@ -806,6 +832,7 @@ function signOut(message) {
   state.session = null;
   store.del(LS_SESSION);
   store.del(LS_CACHE);
+  store.del(LS_SEEN);
   Object.assign(state, { projects: [], items: [], commits: {}, loaded: false, loadError: null, editing: null, drafts: {}, selecting: false });
   state.selected.clear();
   state.lastPct.clear();
@@ -852,11 +879,12 @@ function toast(msg) {
 // ---------------------------------------------------------------------------
 const maxOrder = (arr) => arr.reduce((m, x) => Math.max(m, Number(x.order) || 0), -1);
 
-function addProject(name) {
-  const p = { id: tmpId(), name, dueDate: '', note: '', repo: '', branch: '', order: maxOrder(state.projects) + 1 };
+/** extra: field เพิ่มเติมตอนสร้าง เช่น { repo, group } */
+function addProject(name, extra = {}) {
+  const p = { id: tmpId(), name, dueDate: '', note: '', repo: '', branch: '', group: '', ...extra, order: maxOrder(state.projects) + 1 };
   mutate({
     action: 'addProject',
-    data: { name },
+    data: { name, ...extra },
     apply: () => state.projects.push(p),
     revert: () => {
       removeFrom(state.projects, p);
@@ -990,37 +1018,78 @@ function deleteItem(it) {
   if (hadFocus) focusKey('add:' + it.projectId);
 }
 
-/** ดึงรายชื่อ repo จาก GitHub → แสดงสิ่งที่จะเปลี่ยน → ยืนยัน → เขียนจริง */
+/**
+ * ใช้ syncGithub แบบ dryRun เพื่อดึงแค่รายชื่อ repo ที่ยังไม่ได้ผูก (ไม่เขียนอะไรฝั่ง backend)
+ * แล้วให้ผู้ใช้ติ๊กเลือกเอง → สร้างทีละโปรเจคผ่าน addProject
+ */
 let syncing = false;
+let syncRepos = [];
 async function syncFromGithub() {
   if (syncing) return;
   syncing = true;
   for (const b of document.querySelectorAll('[data-sync]')) b.disabled = true;
-  setStatus('saving');
   try {
     await queue;
-    const preview = (await call('POST', 'syncGithub', { dryRun: true, removeUnlinked: true })).data;
-    if (!preview.add.length && !preview.remove.length) {
-      setStatus('saved');
-      toast(`โปรเจคตรงกับ GitHub แล้ว (${preview.totalRepos} repo)`);
-      return;
-    }
-    const list = (arr) => arr.slice(0, 15).map((x) => '  • ' + x).join('\n') + (arr.length > 15 ? `\n  …และอีก ${arr.length - 15}` : '');
-    const lines = [];
-    if (preview.add.length) lines.push(`เพิ่ม ${preview.add.length} โปรเจคจาก GitHub:\n${list(preview.add)}`);
-    if (preview.remove.length) lines.push(`ลบ ${preview.remove.length} โปรเจคที่ไม่ได้ผูก GitHub (และยังไม่มีรายการ):\n${list(preview.remove)}`);
-    if (!confirm(lines.join('\n\n') + '\n\nดำเนินการเลยไหม?')) { $('#status').classList.remove('show'); return; }
-    const res = (await call('POST', 'syncGithub', { dryRun: false, removeUnlinked: true })).data;
-    setStatus('saved');
-    toast(`เพิ่ม ${res.add.length} · ลบ ${res.remove.length} โปรเจค`);
-    $('#settingsDialog').close();
-    refresh();
+    const preview = (await call('POST', 'syncGithub', { dryRun: true, removeUnlinked: false })).data;
+    const linked = new Set(state.projects.map((p) => (p.repo || '').toLowerCase()).filter(Boolean));
+    const repos = preview.add.filter((r) => !linked.has(r.toLowerCase()));
+    if (!repos.length) { toast(`ไม่มี repo ใหม่ — ผูกครบแล้ว (${preview.totalRepos} repo)`); return; }
+    openSyncDialog(repos, preview.totalRepos);
   } catch (e) {
-    if (e.code !== 'unauthorized') { setStatus('error'); toast(e.message); }
+    if (e.code !== 'unauthorized') toast(e.message);
   } finally {
     syncing = false;
     for (const b of document.querySelectorAll('[data-sync]')) b.disabled = false;
   }
+}
+
+function openSyncDialog(repos, total) {
+  const seen = new Set(store.get(LS_SEEN) || []);
+  const fresh = repos.filter((r) => !seen.has(r.toLowerCase()));
+  const skipped = repos.filter((r) => seen.has(r.toLowerCase()));
+  syncRepos = repos;
+  const row = (r) => {
+    const [owner, name] = r.split('/');
+    return h('label', { class: 'sy-row', 'data-repo': r.toLowerCase() },
+      h('input', { type: 'checkbox', value: r, onchange: updateSyncCount }),
+      h('span', {}, h('span', { class: 'muted', text: owner + '/' }), name));
+  };
+  const parts = [];
+  if (fresh.length) parts.push(h('div', { class: 'sy-sec', text: `repo ใหม่ (${fresh.length})` }), ...fresh.map(row));
+  if (skipped.length) {
+    parts.push(h('details', { open: !fresh.length },
+      h('summary', { class: 'sy-sec', text: `เคยข้ามไว้ (${skipped.length})` }), ...skipped.map(row)));
+  }
+  $('#syList').replaceChildren(...parts);
+  $('#syInfo').textContent = `token เห็น ${total} repo · ยังไม่ได้เพิ่ม ${repos.length} — ติ๊กเฉพาะที่ต้องการ track`;
+  $('#sySearch').value = '';
+  $('#syGroup').value = '';
+  $('#syGroupFld').hidden = !groupsSupported();
+  fillGroupList();
+  updateSyncCount();
+  $('#syncDialog').showModal();
+}
+
+const syncChecked = () => [...$('#syList').querySelectorAll('input:checked')].map((i) => i.value);
+function updateSyncCount() {
+  const n = syncChecked().length;
+  $('#syGo').textContent = n ? `เพิ่ม ${n} โปรเจค` : 'ข้ามทั้งหมด';
+  $('#syGo').setAttribute('aria-label', n ? `เพิ่ม ${n} โปรเจคที่เลือก` : 'ไม่เพิ่ม และย้าย repo ทั้งหมดไปเคยข้ามไว้');
+}
+
+function submitSync() {
+  const picked = syncChecked();
+  const group = groupsSupported() ? $('#syGroup').value.trim().slice(0, 50) : '';
+  const seen = new Set(store.get(LS_SEEN) || []);
+  for (const r of syncRepos) seen.add(r.toLowerCase());
+  store.set(LS_SEEN, [...seen]);
+  $('#syncDialog').close();
+  $('#settingsDialog').close();
+  if (!picked.length) { toast('ข้ามทั้งหมดแล้ว — ดูได้อีกครั้งในหัวข้อ “เคยข้ามไว้”'); return; }
+  if (group) state.collapsedGroups.delete(group);
+  for (const repo of picked) addProject(repo.split('/')[1].slice(0, 100), group ? { repo, group } : { repo });
+  queue.then(loadCommits);
+  toast(`เพิ่ม ${picked.length} โปรเจค` + (group ? ` ในกลุ่ม “${group}”` : ''));
 }
 
 // ---- inline edit ----
@@ -1520,6 +1589,14 @@ $('#settingsBtn').addEventListener('click', () => {
 });
 $('#logoutBtn').addEventListener('click', logout);
 $('#syncBtn').addEventListener('click', syncFromGithub);
+$('#syncForm').addEventListener('submit', (e) => { e.preventDefault(); submitSync(); });
+$('#syCancel').addEventListener('click', () => $('#syncDialog').close());
+$('#sySearch').addEventListener('input', (e) => {
+  const q = e.target.value.trim().toLowerCase();
+  for (const el of $('#syList').querySelectorAll('.sy-row')) el.hidden = !!q && !el.dataset.repo.includes(q);
+  if (q) for (const d of $('#syList').querySelectorAll('details')) d.open = true;
+});
+$('#sySearch').addEventListener('keydown', (e) => { if (e.key === 'Enter') e.preventDefault(); });
 
 $('#pinInput').addEventListener('input', (e) => {
   const digits = e.target.value.replace(/\D/g, '').slice(0, 6);
