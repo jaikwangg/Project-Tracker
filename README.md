@@ -40,6 +40,11 @@ GitHub Pages (index.html + config.js) → fetch → Apps Script Web App → Goog
 5. **Expiration**: ตั้งตามนโยบาย (เช่น 90 วัน หรือ 1 ปี) — **จดวันหมดอายุไว้ในปฏิทิน** เมื่อ token หมดอายุ บรรทัด commit จะหายไปทุกโปรเจคโดยไม่มี error อื่น ให้ Regenerate แล้วอัปเดต Script Property
 6. copy token → Apps Script **Project Settings → Script Properties → Add property**: `GITHUB_TOKEN` = token
 
+### 3.1 ไอเดีย → vault (ไม่บังคับ)
+1. ใน editor เลือกฟังก์ชัน `setSyncKey` → **Run** → copy ค่า `SYNC_KEY` จาก **Project Settings → Script Properties**
+2. บันทึกลงไฟล์ `%USERPROFILE%\.project-tracker\sync-key` บนเครื่องที่รัน vault-sync (บรรทัดเดียว ห้าม commit)
+3. ไอเดียที่จดในช่อง 💡 จะถูกย้ายเข้าโน้ตใน vault ตอนสั่ง sync vault · key นี้ใช้ได้แค่ดึง/ปิดไอเดีย รัน `setSyncKey` ซ้ำเพื่อเปลี่ยน key
+
 ### 4. Deploy Apps Script
 1. **Deploy → New deployment → ⚙ Select type: Web app**
 2. Execute as: **Me**, Who has access: **Anyone** → Deploy → Authorize

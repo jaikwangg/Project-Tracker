@@ -6,6 +6,7 @@
  *   PIN_SALT     (บังคับ) สตริงสุ่ม — สร้างด้วย setPin()
  *   GITHUB_TOKEN (บังคับ) Fine-grained PAT สำหรับอ่าน private repo (รวม repo ของ vault ด้วย)
  *   VAULT_REPO   (ไม่บังคับ) owner/repo ของ Obsidian vault — ค่าเริ่มต้น DEFAULT_VAULT_REPO
+ *   SYNC_KEY     (ไม่บังคับ) key ให้ vault-sync ดึง/ปิดไอเดีย — สร้างด้วย setSyncKey()
  *   sess_<token>          session ที่ login อยู่ (ค่า = เวลาหมดอายุ ms)
  *   pin_lock_until / pin_lock_rounds  สถานะการล็อก PIN
  */
@@ -38,6 +39,17 @@ function revokeAllSessions() {
   keys.forEach(function (k) { props.deleteProperty(k); });
   Logger.log('ล้าง session ' + keys.length + ' รายการ');
   return keys.length;
+}
+
+/**
+ * สร้าง SYNC_KEY ให้ vault-sync ดึงไอเดียได้โดยไม่ต้องใช้ PIN (แตะได้แค่ไอเดีย)
+ * Run แล้ว copy ค่าจาก Project Settings → Script Properties ไปใส่ไฟล์ ~/.project-tracker/sync-key บนเครื่อง
+ * รันซ้ำ = เปลี่ยน key ใหม่ (key เดิมใช้ไม่ได้ทันที)
+ */
+function setSyncKey() {
+  var key = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '');
+  PropertiesService.getScriptProperties().setProperty('SYNC_KEY', key);
+  Logger.log('✓ ตั้ง SYNC_KEY ใหม่แล้ว — copy จาก Project Settings → Script Properties');
 }
 
 /** ตรวจการอ่าน vault: รันจาก editor แล้วดู Execution log */
@@ -100,7 +112,7 @@ var LOCK_SHORT_MS = 15 * 60 * 1000;
 var LOCK_LONG_MS = DAY_MS;
 var LOCK_ROUNDS_FOR_LONG = 3;
 
-var BACKEND_VERSION = '2026-10-16.1';
+var BACKEND_VERSION = '2026-10-16.2';
 
 var SCHEMA = {
   Projects: {
@@ -111,9 +123,14 @@ var SCHEMA = {
     headers: ['id', 'projectId', 'text', 'done', 'order', 'createdAt', 'updatedAt'],
     text: ['id', 'projectId', 'text', 'createdAt', 'updatedAt'],
   },
+  Ideas: {
+    headers: ['id', 'text', 'project', 'status', 'createdAt', 'updatedAt'],
+    text: ['id', 'text', 'project', 'status', 'createdAt', 'updatedAt'],
+  },
 };
 
-var LIMITS = { name: 100, text: 300, note: 1000, branch: 100, group: 50 };
+var LIMITS = { name: 100, text: 300, note: 1000, branch: 100, group: 50, idea: 1000 };
+var IDEA_STATUS = ['new', 'imported', 'dropped'];
 var REPO_RE = /^[\w.-]+\/[\w.-]+$/;
 var BRANCH_RE = /^[\w./-]+$/;
 var DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -133,7 +150,7 @@ function doGet(e) {
     checkSession_(p.sessionToken);
     switch (p.action) {
       case 'list':
-        return { projects: readObjects_('Projects'), items: readObjects_('Items'), version: BACKEND_VERSION };
+        return { projects: readObjects_('Projects'), items: readObjects_('Items'), ideas: newIdeas_(), version: BACKEND_VERSION };
       case 'commits':
         return { commits: getCommits_() };
       case 'vault':
@@ -155,6 +172,10 @@ function doPost(e) {
     var data = body.data || {};
     if (body.action === 'login') return { data: withLock_(function () { return login_(data); }) };
     if (body.action === 'logout') return { data: logout_(body.sessionToken) };
+    if (SYNC_ACTIONS[body.action]) {
+      checkSyncKey_(body.syncKey);
+      return { data: withLock_(function () { return SYNC_ACTIONS[body.action](data); }) };
+    }
 
     checkSession_(body.sessionToken);
     var handler = POST_ACTIONS[body.action];
@@ -172,6 +193,14 @@ var POST_ACTIONS = {
   updateItem: updateItem_,
   deleteItem: deleteItem_,
   syncGithub: syncGithub_,
+  addIdea: addIdea_,
+  updateIdea: updateIdea_,
+};
+
+/** สำหรับ vault-sync (agent บนเครื่อง) — ใช้ SYNC_KEY แทน PIN และแตะได้แค่ไอเดีย */
+var SYNC_ACTIONS = {
+  listIdeas: function () { return newIdeas_(); },
+  markIdeasImported: markIdeasImported_,
 };
 
 function respond_(fn) {
@@ -273,6 +302,11 @@ function purgeExpiredSessions_(props, now) {
   Object.keys(all).forEach(function (k) {
     if (k.indexOf(SESSION_PREFIX) === 0 && !(Number(all[k]) > now)) props.deleteProperty(k);
   });
+}
+
+function checkSyncKey_(key) {
+  var real = PropertiesService.getScriptProperties().getProperty('SYNC_KEY');
+  if (!real || typeof key !== 'string' || !safeEqual_(key, real)) throw new Error('unauthorized');
 }
 
 function safeEqual_(a, b) {
@@ -641,6 +675,62 @@ function deleteItem_(data) {
   if (i < 0) throw new Error('ไม่พบรายการนี้ (อาจถูกลบไปแล้ว)');
   deleteRowIndexes_(t, [i]);
   return { id: data.id };
+}
+
+// ---------------------------------------------------------------------------
+// Ideas — จดใน Tracker แล้ว vault-sync ย้ายเข้าโน้ตใน vault
+// ---------------------------------------------------------------------------
+
+function newIdeas_() {
+  return readObjects_('Ideas').filter(function (x) { return x.status === 'new'; });
+}
+
+function addIdea_(data) {
+  var ts = now_();
+  var idea = {
+    id: Utilities.getUuid(),
+    text: cleanStr_(data.text, 'ไอเดีย', LIMITS.idea, true),
+    project: cleanStr_(data.project, 'ชื่อโปรเจค', LIMITS.name, false),
+    status: 'new',
+    createdAt: ts,
+    updatedAt: ts,
+  };
+  appendRows_(table_('Ideas'), [idea]);
+  return idea;
+}
+
+function updateIdea_(data) {
+  var t = table_('Ideas');
+  var i = findIndex_(t, data.id);
+  if (i < 0) throw new Error('ไม่พบไอเดียนี้ (อาจถูกลบไปแล้ว)');
+  var idea = toObj_(t, t.rows[i]);
+  if ('text' in data) idea.text = cleanStr_(data.text, 'ไอเดีย', LIMITS.idea, true);
+  if ('project' in data) idea.project = cleanStr_(data.project, 'ชื่อโปรเจค', LIMITS.name, false);
+  if ('status' in data) {
+    if (IDEA_STATUS.indexOf(data.status) < 0) throw new Error('status ต้องเป็น ' + IDEA_STATUS.join('/'));
+    idea.status = data.status;
+  }
+  idea.updatedAt = now_();
+  writeRows_(t, i, [toRow_(t, idea)]);
+  return idea;
+}
+
+function markIdeasImported_(data) {
+  if (!Array.isArray(data.ids)) throw new Error('ต้องส่ง ids เป็น array');
+  var want = {};
+  data.ids.forEach(function (id) { want[String(id)] = true; });
+  var t = table_('Ideas');
+  var ts = now_();
+  var count = 0;
+  t.rows.forEach(function (r, i) {
+    var idea = toObj_(t, r);
+    if (!want[idea.id] || idea.status !== 'new') return;
+    idea.status = 'imported';
+    idea.updatedAt = ts;
+    writeRows_(t, i, [toRow_(t, idea)]);
+    count++;
+  });
+  return { imported: count };
 }
 
 // ---------------------------------------------------------------------------
