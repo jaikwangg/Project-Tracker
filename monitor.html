@@ -235,7 +235,7 @@ function makeTower(d) {
   for (let f = 0; f < floors; f++) {
     const h = fh - (floors > 1 ? 0.08 : 0);
     const y = f * fh + h / 2;
-    const shell = new THREE.Mesh(box(h), mat(color, 0.08 * fade));
+    const shell = new THREE.Mesh(box(h), mat(color, 0.14 * fade));
     shell.position.y = y;
     const line = edges(h);
     line.position.y = y;
@@ -253,6 +253,11 @@ function makeTower(d) {
       }
     }
   }
+  // ฐานทึบเสมอ — โปรเจกต์ที่ยังไม่มี checklist/phase จะได้ไม่เป็นกล่องเปล่า และยังเห็นสีสถานะ
+  const base = new THREE.Mesh(box(0.3), mat(color, 0.95 * fade, true));
+  base.scale.set(1.04, 1, 1.04);
+  base.position.y = 0.15;
+  g.add(base);
   if (!d.phase && d.pct > 0) {
     const h = Math.max(0.06, (d.pct / 100) * H);
     const m = new THREE.Mesh(box(h), mat(color, 0.9 * fade));
