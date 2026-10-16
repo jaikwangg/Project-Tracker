@@ -35,6 +35,7 @@ GitHub Pages (index.html + config.js) → fetch → Apps Script Web App → Goog
    - repo ใน **Organization** → เลือกชื่อ org (ถ้า org บังคับให้อนุมัติ token แอดมินของ org ต้องกด approve ก่อน token จึงใช้ได้ — ดูได้ที่ org → Settings → Personal access tokens → Pending requests)
    - ถ้ามี repo ทั้งส่วนตัวและใน org: token หนึ่งตัวเลือก owner ได้แค่หนึ่งเจ้า → แนะนำย้าย/ให้สิทธิ์ให้อยู่ owner เดียวกัน หรือใช้ token ของ owner ที่มี repo มากกว่า (โปรเจคที่อ่านไม่ได้จะแค่ไม่แสดงบรรทัด commit)
 3. **Repository access → Only select repositories** → เลือกทุก repo ที่จะผูกกับโปรเจค (เลือกได้หลายตัว; เพิ่ม repo ภายหลังได้โดยแก้ token เดิม ไม่ต้องสร้างใหม่)
+   - token ต้องเห็น `jaikwangg/jk-vault` (Obsidian vault) ด้วย (ถ้าตั้งเป็น All repositories ไว้แล้วก็ไม่ต้องแก้) — การ์ดจะแสดงบรรทัด 📓 จาก frontmatter ของโน้ตโปรเจกต์ (ถ้า vault อยู่ repo อื่น ตั้ง Script Property `VAULT_REPO` = owner/repo) · ตรวจได้ด้วยฟังก์ชัน `testVault`
 4. **Permissions → Repository permissions → Contents: Read-only** (Metadata: Read-only จะถูกเลือกให้เอง)
 5. **Expiration**: ตั้งตามนโยบาย (เช่น 90 วัน หรือ 1 ปี) — **จดวันหมดอายุไว้ในปฏิทิน** เมื่อ token หมดอายุ บรรทัด commit จะหายไปทุกโปรเจคโดยไม่มี error อื่น ให้ Regenerate แล้วอัปเดต Script Property
 6. copy token → Apps Script **Project Settings → Script Properties → Add property**: `GITHUB_TOKEN` = token

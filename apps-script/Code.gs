@@ -4,7 +4,8 @@
  * Script Properties:
  *   PIN_HASH     (บังคับ) SHA-256 hex ของ (PIN + PIN_SALT) — สร้างด้วย setPin()
  *   PIN_SALT     (บังคับ) สตริงสุ่ม — สร้างด้วย setPin()
- *   GITHUB_TOKEN (บังคับ) Fine-grained PAT สำหรับอ่าน private repo
+ *   GITHUB_TOKEN (บังคับ) Fine-grained PAT สำหรับอ่าน private repo (รวม repo ของ vault ด้วย)
+ *   VAULT_REPO   (ไม่บังคับ) owner/repo ของ Obsidian vault — ค่าเริ่มต้น DEFAULT_VAULT_REPO
  *   sess_<token>          session ที่ login อยู่ (ค่า = เวลาหมดอายุ ms)
  *   pin_lock_until / pin_lock_rounds  สถานะการล็อก PIN
  */
@@ -37,6 +38,14 @@ function revokeAllSessions() {
   keys.forEach(function (k) { props.deleteProperty(k); });
   Logger.log('ล้าง session ' + keys.length + ' รายการ');
   return keys.length;
+}
+
+/** ตรวจการอ่าน vault: รันจาก editor แล้วดู Execution log */
+function testVault() {
+  CacheService.getScriptCache().remove(VAULT_CACHE_KEY);
+  var notes = getVault_();
+  Logger.log('✓ อ่านโน้ตโปรเจกต์ได้ ' + notes.length + ' ไฟล์');
+  notes.forEach(function (n) { Logger.log('  ' + n.name + ' | repo=' + (n.repo || '-') + ' | updated=' + (n.updated || '-')); });
 }
 
 /** ตรวจการดึง commit: รันจาก editor แล้วดู Execution log ว่าแต่ละ repo ได้ผลอะไร */
@@ -91,7 +100,7 @@ var LOCK_SHORT_MS = 15 * 60 * 1000;
 var LOCK_LONG_MS = DAY_MS;
 var LOCK_ROUNDS_FOR_LONG = 3;
 
-var BACKEND_VERSION = '2026-10-01.6';
+var BACKEND_VERSION = '2026-10-16.1';
 
 var SCHEMA = {
   Projects: {
@@ -110,6 +119,9 @@ var BRANCH_RE = /^[\w./-]+$/;
 var DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 var COMMIT_CACHE_SECONDS = 600;
 var COMMIT_ERROR_CACHE_SECONDS = 120;
+var DEFAULT_VAULT_REPO = 'jaikwangg/jk-vault';
+var VAULT_CACHE_KEY = 'vault:v1';
+var VAULT_FIELDS = ['status', 'summary', 'progress', 'updated', 'phase', 'repo'];
 
 // ---------------------------------------------------------------------------
 // Entry points
@@ -124,6 +136,8 @@ function doGet(e) {
         return { projects: readObjects_('Projects'), items: readObjects_('Items'), version: BACKEND_VERSION };
       case 'commits':
         return { commits: getCommits_() };
+      case 'vault':
+        return { vault: getVault_() };
       default:
         throw new Error('ไม่รู้จัก action: ' + p.action);
     }
@@ -684,12 +698,79 @@ function getCommits_() {
 function githubRequest_(repo, branch, ghToken) {
   var url = 'https://api.github.com/repos/' + repo + '/commits?per_page=1';
   if (branch) url += '&sha=' + encodeURIComponent(branch);
+  return ghGet_(url, ghToken);
+}
+
+function ghGet_(url, ghToken, accept) {
   var headers = {
-    Accept: 'application/vnd.github+json',
+    Accept: accept || 'application/vnd.github+json',
     'X-GitHub-Api-Version': '2022-11-28',
     Authorization: 'Bearer ' + ghToken,
   };
   return { url: url, method: 'get', headers: headers, muteHttpExceptions: true };
+}
+
+// ---------------------------------------------------------------------------
+// Obsidian vault (อ่านอย่างเดียวผ่าน GitHub)
+// ---------------------------------------------------------------------------
+
+/**
+ * frontmatter ของโน้ตโปรเจกต์ใน vault (Projects/<ชื่อ>/<ชื่อ>.md)
+ * ส่งแค่ field ใน VAULT_FIELDS — เนื้อหาโน้ตไม่ออกจาก backend
+ */
+function getVault_() {
+  var cache = CacheService.getScriptCache();
+  var hit = cache.get(VAULT_CACHE_KEY);
+  if (hit) {
+    try { return JSON.parse(hit); } catch (err) { /* fetch again */ }
+  }
+  var props = PropertiesService.getScriptProperties();
+  var ghToken = (props.getProperty('GITHUB_TOKEN') || '').trim();
+  if (!ghToken) throw new Error('ยังไม่ได้ตั้งค่า GITHUB_TOKEN ใน Script Properties');
+  var repo = (props.getProperty('VAULT_REPO') || DEFAULT_VAULT_REPO).trim();
+  if (!REPO_RE.test(repo)) throw new Error('VAULT_REPO ต้องเป็น owner/repo');
+
+  var base = 'https://api.github.com/repos/' + repo;
+  var tree = ghGet_(base + '/git/trees/HEAD?recursive=1', ghToken);
+  var res = UrlFetchApp.fetch(tree.url, tree);
+  if (res.getResponseCode() !== 200) {
+    throw new Error('อ่าน vault ไม่ได้ (' + repo + ' HTTP ' + res.getResponseCode() + ') — เพิ่ม repo นี้ให้ GITHUB_TOKEN');
+  }
+  var paths = (JSON.parse(res.getContentText()).tree || [])
+    .filter(function (f) { return f.type === 'blob' && /^Projects\/([^/]+)\/\1\.md$/.test(f.path); })
+    .map(function (f) { return f.path; });
+
+  var responses = fetchAllSafe_(paths.map(function (path) {
+    var url = base + '/contents/' + path.split('/').map(encodeURIComponent).join('/');
+    return ghGet_(url, ghToken, 'application/vnd.github.raw');
+  }));
+  var notes = [];
+  paths.forEach(function (path, n) {
+    var r = responses[n];
+    if (!r || r.getResponseCode() !== 200) return;
+    var note = parseFrontmatter_(r.getContentText());
+    note.name = path.split('/')[1];
+    note.path = path;
+    notes.push(note);
+  });
+  try { cache.put(VAULT_CACHE_KEY, JSON.stringify(notes), COMMIT_CACHE_SECONDS); } catch (err) { /* ใหญ่เกิน cache — ไม่เป็นไร */ }
+  return notes;
+}
+
+// ponytail: อ่านได้แค่ `key: value` บรรทัดเดียว (แบบที่ vault ใช้อยู่) — ถ้าเริ่มใช้ค่าหลายบรรทัดใน YAML ค่อยเปลี่ยนเป็น parser จริง
+function parseFrontmatter_(text) {
+  var out = {};
+  var m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+  if (!m) return out;
+  m[1].split(/\r?\n/).forEach(function (line) {
+    var kv = /^([\w-]+):[ \t]*(.*)$/.exec(line);
+    if (!kv || VAULT_FIELDS.indexOf(kv[1]) < 0) return;
+    var v = kv[2].trim();
+    if (/^'.*'$/.test(v)) v = v.slice(1, -1).replace(/''/g, "'");
+    else if (/^".*"$/.test(v)) v = v.slice(1, -1);
+    out[kv[1]] = v.slice(0, 2000);
+  });
+  return out;
 }
 
 /** fetchAll ทั้งชุด ถ้าล้มทั้งชุด (เช่น network error) ค่อยยิงทีละตัว */

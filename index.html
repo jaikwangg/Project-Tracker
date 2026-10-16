@@ -433,6 +433,7 @@
 
 const APP_VERSION = '2026-10-02.1';
 const API = typeof API_URL === 'string' ? API_URL.trim() : '';
+const VAULT_NAME = 'jk-vault'; // ชื่อโฟลเดอร์ vault ใน Obsidian — ใช้กับลิงก์ obsidian://
 const TIMEOUT_MS = 15000;
 const LS_SESSION = 'pt_session';
 const LS_CACHE = 'pt_cache';
@@ -527,7 +528,7 @@ function normalizeRepo(s) {
 const ui = store.get(LS_UI) || {};
 const state = {
   session: store.get(LS_SESSION),   // { token, expiresAt }
-  projects: [], items: [], commits: {},
+  projects: [], items: [], commits: {}, vault: [],
   loaded: false, loading: false, loadError: null, lastLoad: 0,
   expanded: new Set(Array.isArray(ui.expanded) ? ui.expanded : []),
   doneOpen: !!ui.doneOpen,
@@ -564,7 +565,7 @@ function sortProjects(list) {
 }
 function saveCache() {
   if (!state.session || pending || !state.loaded) return;
-  store.set(LS_CACHE, { projects: state.projects, items: state.items, commits: state.commits, ts: Date.now() });
+  store.set(LS_CACHE, { projects: state.projects, items: state.items, commits: state.commits, vault: state.vault, ts: Date.now() });
 }
 
 // ---------------------------------------------------------------------------
@@ -740,8 +741,21 @@ async function loadCommits() {
   }
 }
 
+async function loadVault() {
+  if (!state.session) return;
+  try {
+    const res = await call('GET', 'vault');
+    state.vault = Array.isArray(res.vault) ? res.vault : [];
+    saveCache();
+    render();
+  } catch (e) {
+    if (e.code !== 'unauthorized') console.warn('vault:', e.message);
+    if (/อ่าน vault|VAULT_REPO|GITHUB_TOKEN/.test(e.message)) toast(e.message); // backend เก่าที่ยังไม่รู้จัก action นี้ → เงียบไว้
+  }
+}
+
 async function refresh() {
-  if (await loadList()) loadCommits();
+  if (await loadList()) { loadCommits(); loadVault(); }
 }
 
 // ---------------------------------------------------------------------------
@@ -833,7 +847,7 @@ function signOut(message) {
   store.del(LS_SESSION);
   store.del(LS_CACHE);
   store.del(LS_SEEN);
-  Object.assign(state, { projects: [], items: [], commits: {}, loaded: false, loadError: null, editing: null, drafts: {}, selecting: false });
+  Object.assign(state, { projects: [], items: [], commits: {}, vault: [], loaded: false, loadError: null, editing: null, drafts: {}, selecting: false });
   state.selected.clear();
   state.lastPct.clear();
   for (const d of document.querySelectorAll('dialog[open]')) d.close();
@@ -1319,7 +1333,27 @@ function projectCard(p, s, anims, isFirst, isLast) {
   bar, meta);
 
   return h('article', { class: 'card' + (s.complete ? ' complete' : '') + (picked ? ' selected' : ''), 'data-pid': pid },
-    head, commitLine(p, s), open ? cardBody(p, isFirst, isLast) : null);
+    head, commitLine(p, s), vaultLine(p), open ? cardBody(p, isFirst, isLast) : null);
+}
+
+// "owner/name (หมายเหตุ)" → "name" — โน้ตบางตัวเขียน owner ไม่ตรงจริง จึงเทียบแค่ชื่อ repo
+const repoName = (r) => String(r || '').trim().split(/\s/)[0].split('/').pop().toLowerCase();
+function vaultNote(p) {
+  const rn = repoName(p.repo);
+  const name = p.name.trim().toLowerCase();
+  return state.vault.find((v) => rn && repoName(v.repo) === rn) || state.vault.find((v) => v.name.toLowerCase() === name);
+}
+
+function vaultLine(p) {
+  const v = vaultNote(p);
+  if (!v) return null;
+  const parts = [v.phase, truncate(v.progress, 140), v.updated && 'อัปเดต ' + v.updated].filter(Boolean);
+  if (!parts.length) return null;
+  const href = 'obsidian://open?vault=' + encodeURIComponent(VAULT_NAME) + '&file=' + encodeURIComponent(v.path.replace(/\.md$/, ''));
+  return h('a', {
+    class: 'commit', href,
+    'aria-label': `โน้ตใน vault ของ ${p.name}: ${parts.join(', ')} (เปิดใน Obsidian)`,
+  }, '📓 ' + parts.join(' · '));
 }
 
 function commitLine(p, s) {
@@ -1616,7 +1650,7 @@ document.addEventListener('visibilitychange', () => {
   if (API && state.session) {
     const c = store.get(LS_CACHE);
     if (c && Array.isArray(c.projects)) {
-      Object.assign(state, { projects: c.projects, items: c.items || [], commits: c.commits || {}, loaded: true });
+      Object.assign(state, { projects: c.projects, items: c.items || [], commits: c.commits || {}, vault: c.vault || [], loaded: true });
     }
     render();
     refresh();
