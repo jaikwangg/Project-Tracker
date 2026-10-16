@@ -438,16 +438,18 @@ async function load() {
     const [c, v] = await Promise.allSettled([get('commits'), get('vault')]);
     const commits = c.status === 'fulfilled' ? c.value.commits || {} : {};
     const vault = v.status === 'fulfilled' && Array.isArray(v.value.vault) ? v.value.vault : [];
-    if (v.status === 'rejected') warns.push('อ่าน vault ไม่ได้');
+    if (v.status === 'rejected') warns.push('อ่าน vault ไม่ได้: ' + truncate(v.reason.message, 90));
+    if (c.status === 'rejected') warns.push('ดึง commit ไม่ได้: ' + truncate(c.reason.message, 90));
     const withRepo = list.projects.filter((p) => p.repo);
-    if (withRepo.length && !withRepo.some((p) => commits[p.id])) warns.push('ไม่มี commit เลย — GITHUB_TOKEN หมดอายุ?');
+    if (c.status === 'fulfilled' && withRepo.length && !withRepo.some((p) => commits[p.id])) warns.push('ไม่มี commit เลย — GITHUB_TOKEN หมดอายุ?');
+    warns.push(`backend ${list.version || 'เก่า'} · Tracker ${list.projects.length} โปรเจกต์ · vault ${vault.length} โน้ต`);
     const newest = Math.max(0, ...vault.map((n) => Date.parse(n.updated) || 0));
     if (newest && Date.now() - newest > 3 * DAY_MS) warns.push(`vault ไม่ได้ sync ${Math.floor((Date.now() - newest) / DAY_MS)} วัน`);
 
     const data = build(list, commits, vault);
     renderChips(data, warns);
     if (use3d) layout(data); else renderTable(data);
-    $('#msg').replaceChildren();
+    $('#msg').textContent = data.length ? '' : 'ไม่มีข้อมูลให้แสดง — ดูข้อความ ⚠ ด้านบน';
   } catch (e) {
     if (e.message === 'unauthorized') return needLogin();
     renderChips([], ['โหลดข้อมูลไม่สำเร็จ: ' + truncate(e.message, 60)]);
