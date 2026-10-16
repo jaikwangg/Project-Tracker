@@ -59,6 +59,11 @@ GitHub Pages (index.html + config.js) → fetch → Apps Script Web App → Goog
 ### ⚠ ทุกครั้งที่แก้ Code.gs
 ต้อง **Deploy → Manage deployments → ✏ Edit → Version: New version → Deploy** ไม่อย่างนั้น URL เดิมยังรันโค้ดเก่า
 
+## จอมอนิเตอร์ 3D
+เปิด `monitor.html` (ปุ่ม 🖥 บนหน้าหลัก) ต้องเข้าสู่ระบบที่หน้าหลักในเบราว์เซอร์เดียวกันก่อน · 1 โปรเจกต์ = 1 ตึก สูงตาม % checklist สีตามความสด (เขียว ≤3 วัน / เหลือง ≤7 / แดง / น้ำเงิน = เสร็จ) · ถ้าโน้ตใน vault มี `phase: 3/5 ...` ตึกจะแบ่งชั้นตาม phase · จุดสีเหลือง = ไอเดียที่ยังไม่เข้า vault · ธงแดง = เลยกำหนด
+
+เปิดค้างเต็มจอ: `chrome --app=https://<user>.github.io/Project-Tracker/monitor.html --start-fullscreen` (ใส่ shortcut ไว้ใน shell:startup ถ้าอยากให้เปิดเองตอนเปิดเครื่อง)
+
 ## เปลี่ยน PIN / เตะทุกเครื่องออก
 - **เปลี่ยน PIN**: ทำซ้ำขั้นตอนที่ 2 (`setPin()`) — จะสร้าง salt ใหม่ ล้างตัวนับล็อก และ **ล้าง session ทุกเครื่อง** ให้อัตโนมัติ อย่าลืมลบ PIN ออกจากโค้ดหลังรัน
 - **ทำเครื่องหาย / สงสัยว่ามีคนเข้าได้**: ใน editor เลือกฟังก์ชัน `revokeAllSessions` → **Run** → ทุกเครื่องจะเด้งกลับหน้า PIN ในการเรียกครั้งถัดไป (แนะนำเปลี่ยน PIN ด้วย)

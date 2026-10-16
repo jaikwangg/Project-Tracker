@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Project Monitor</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;600;700&display=swap">
+<style>
+  :root {
+    --bg: #0b1020; --text: #e6e9f2; --muted: #8b93a7;
+    --panel: rgba(16, 22, 40, .85); --border: rgba(255, 255, 255, .14);
+    --green: #3ecf8e; --amber: #f5b546; --red: #f0605d; --blue: #5b9cff; --gray: #7c8496;
+  }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
+    font-family: 'IBM Plex Sans Thai', system-ui, sans-serif; }
+  #scene { position: fixed; inset: 0; }
+  .hud { position: fixed; top: 16px; left: 16px; right: 16px; display: flex; flex-wrap: wrap; gap: 8px;
+    align-items: center; pointer-events: none; }
+  .hud h1 { margin: 0 8px 0 0; font-size: 20px; }
+  .hud .spacer { flex: 1; }
+  .chip { padding: 4px 10px; border-radius: 999px; background: var(--panel); border: 1px solid var(--border); font-size: 14px; }
+  .chip .sw { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+  .chip.warn { border-color: var(--amber); color: var(--amber); }
+  .hud a { pointer-events: auto; color: var(--muted); font-size: 14px; }
+  #info { position: fixed; left: 16px; bottom: 16px; min-width: min(340px, calc(100vw - 32px)); box-sizing: border-box; max-width: min(560px, calc(100vw - 32px)); padding: 14px 16px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px; font-size: 14px; line-height: 1.5; }
+  #info:empty { display: none; }
+  #info h2 { margin: 0 0 4px; font-size: 20px; }
+  #info .row { color: var(--muted); overflow-wrap: anywhere; }
+  #info .big { font-size: 28px; font-weight: 700; float: right; margin-left: 12px; }
+  .label { padding: 2px 8px; border-radius: 6px; background: var(--panel); border: 1px solid var(--border);
+    font-size: 13px; white-space: nowrap; text-align: center; transition: border-color .4s; }
+  .label b { display: block; font-size: 14px; }
+  .label:not(.focus) { opacity: .75; }
+  .label.focus { border-color: var(--text); }
+  .label.faint { opacity: .55; }
+  .glabel { font-size: 15px; font-weight: 600; color: var(--muted); }
+  #msg { position: fixed; inset: 0; display: grid; place-items: center; text-align: center; padding: 16px; }
+  #msg:empty { display: none; }
+  #msg a { color: var(--blue); }
+  #fallback { position: fixed; inset: 72px 16px 16px; overflow: auto; }
+  #fallback table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  #fallback td, #fallback th { padding: 8px; border-bottom: 1px solid var(--border); text-align: left; }
+  #dim { position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none; transition: opacity 3s; }
+  body.night #dim { opacity: .5; }
+</style>
+<script src="config.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="scene"></div>
+<div class="hud">
+  <h1>Projects</h1>
+  <span id="chips" style="display:contents"></span>
+  <span class="spacer"></span>
+  <span id="clock" class="chip"></span>
+  <a href="./">กลับหน้าหลัก</a>
+</div>
+<div id="info" aria-live="polite"></div>
+<div id="fallback" hidden></div>
+<div id="msg"></div>
+<div id="dim"></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+const API = typeof API_URL === 'string' ? API_URL.trim() : '';
+const REFRESH_MS = 5 * 60 * 1000;
+const TOUR_MS = 15 * 1000;
+const PAUSE_AFTER_TOUCH_MS = 60 * 1000;
+const DAY_MS = 86400000;
+const H = 5;       // ความสูงตึกเมื่อเสร็จ 100%
+const GAP = 3.4;   // ระยะห่างระหว่างตึก
+const STATES = {
+  green: { color: '#3ecf8e', text: 'อัปเดตไม่เกิน 3 วัน' },
+  amber: { color: '#f5b546', text: 'อัปเดต 4–7 วัน' },
+  red:   { color: '#f0605d', text: 'ไม่ขยับเกิน 7 วัน' },
+  done:  { color: '#5b9cff', text: 'เสร็จแล้ว' },
+  gray:  { color: '#7c8496', text: 'ไม่มีข้อมูล / เก่า' },
+};
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const $ = (s) => document.querySelector(s);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const truncate = (s, n) => { const a = Array.from(s || ''); return a.length > n ? a.slice(0, n).join('') + '…' : a.join(''); };
+const rtf = new Intl.RelativeTimeFormat('th', { numeric: 'auto' });
+function relTime(t) {
+  if (!t) return '';
+  const days = Math.round((t - Date.now()) / DAY_MS);
+  if (days === 0) return 'วันนี้';
+  return Math.abs(days) < 60 ? rtf.format(days, 'day') : rtf.format(Math.round(days / 30), 'month');
+}
+const repoName = (r) => String(r || '').trim().split(/\s/)[0].split('/').pop().toLowerCase();
+
+let session = null;
+try { session = JSON.parse(localStorage.getItem('pt_session')); } catch { /* ignore */ }
+
+async function get(action) {
+  const u = new URL(API);
+  u.searchParams.set('action', action);
+  u.searchParams.set('sessionToken', session.token);
+  const res = await fetch(u, { cache: 'no-store' });
+  const json = await res.json();
+  if (!json || json.ok !== true) throw new Error((json && json.error) || 'unknown');
+  return json;
+}
+
+// ---------------------------------------------------------------------------
+// ข้อมูล: Tracker (checklist) + commit + vault (frontmatter)
+// ---------------------------------------------------------------------------
+function build(list, commits, vault) {
+  const today = new Date().toLocaleDateString('sv'); // YYYY-MM-DD ตามเวลาเครื่อง
+  const ideasBy = new Map();
+  for (const i of list.ideas || []) {
+    const k = (i.project || '').toLowerCase();
+    if (!ideasBy.has(k)) ideasBy.set(k, []);
+    ideasBy.get(k).push(i.text);
+  }
+  const used = new Set();
+  const out = list.projects.map((p) => {
+    const its = list.items.filter((i) => i.projectId === p.id);
+    const done = its.filter((i) => i.done).length;
+    const complete = its.length > 0 && done === its.length;
+    const rn = repoName(p.repo);
+    const v = vault.find((n) => rn && repoName(n.repo) === rn) || vault.find((n) => n.name.toLowerCase() === p.name.trim().toLowerCase());
+    if (v) used.add(v);
+    return entry({
+      name: p.name, group: (p.group || '').trim(), total: its.length, done, complete,
+      pct: complete ? 100 : its.length ? Math.floor((done / its.length) * 100) : 0,
+      commit: commits[p.id] || null, note: v || null, due: p.dueDate || '',
+      overdue: !!p.dueDate && !complete && p.dueDate < today,
+      ideas: ideasBy.get(p.name.toLowerCase()) || [],
+    });
+  });
+  // โปรเจกต์ที่มีแค่ใน vault → แสดงจาง ๆ
+  for (const v of vault) {
+    if (used.has(v)) continue;
+    out.push(entry({ name: v.name, group: 'มีแค่ใน vault', total: 0, done: 0, complete: false, pct: 0,
+      commit: null, note: v, due: '', overdue: false, ideas: ideasBy.get(v.name.toLowerCase()) || [], faint: true }));
+  }
+  return out;
+}
+
+function entry(d) {
+  d.last = Math.max(Date.parse(d.commit && d.commit.date) || 0, Date.parse(d.note && d.note.updated) || 0);
+  const m = /(\d+)\s*\/\s*(\d+)/.exec((d.note && d.note.phase) || '');
+  d.phase = m && +m[2] > 0 ? { at: Math.min(+m[1], +m[2]), total: Math.min(+m[2], 12) } : null;
+  const age = (Date.now() - d.last) / DAY_MS;
+  d.state = d.complete ? 'done'
+    : (d.note && d.note.status === 'historical') || !d.last ? 'gray'
+    : age <= 3 ? 'green' : age <= 7 ? 'amber' : 'red';
+  return d;
+}
+
+// ---------------------------------------------------------------------------
+// ฉาก 3D
+// ---------------------------------------------------------------------------
+let renderer, labelRenderer, scene, camera, controls, world;
+const towers = [];
+let tourIdx = -1, tourAt = 0, pausedUntil = 0;
+const target = new THREE.Vector3();
+
+function initScene() {
+  renderer = new THREE.WebGLRenderer({ antialias: true }); // ไม่มี WebGL → throw → ใช้ตาราง
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  $('#scene').append(renderer.domElement);
+  labelRenderer = new CSS2DRenderer();
+  labelRenderer.setSize(innerWidth, innerHeight);
+  Object.assign(labelRenderer.domElement.style, { position: 'absolute', inset: '0', pointerEvents: 'none' });
+  $('#scene').append(labelRenderer.domElement);
+
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color('#0b1020');
+  scene.fog = new THREE.Fog('#0b1020', 30, 70);
+  camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 200);
+  camera.position.set(14, 12, 18);
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.autoRotate = !reduceMotion;
+  controls.autoRotateSpeed = 0.35;
+  controls.maxPolarAngle = Math.PI * 0.47;
+  controls.addEventListener('start', () => { pausedUntil = Date.now() + PAUSE_AFTER_TOUCH_MS; });
+
+  scene.add(new THREE.HemisphereLight('#c9d6ff', '#1a1f33', 1.1));
+  const sun = new THREE.DirectionalLight('#ffffff', 1.2);
+  sun.position.set(10, 20, 8);
+  scene.add(sun);
+  const grid = new THREE.GridHelper(80, 40, '#26304d', '#161d33');
+  scene.add(grid);
+  world = new THREE.Group();
+  scene.add(world);
+
+  addEventListener('resize', () => {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+    labelRenderer.setSize(innerWidth, innerHeight);
+  });
+  renderer.setAnimationLoop(frame);
+}
+
+function clearWorld() {
+  world.traverse((o) => { o.geometry && o.geometry.dispose(); o.material && o.material.dispose(); });
+  world.clear();
+  towers.length = 0;
+}
+
+function mat(color, opacity, emissive) {
+  return new THREE.MeshStandardMaterial({ color, transparent: opacity < 1, opacity, roughness: 0.5,
+    emissive: emissive ? color : '#000000', emissiveIntensity: emissive ? 0.6 : 0, depthWrite: opacity >= 1 });
+}
+
+function makeTower(d) {
+  const g = new THREE.Group();
+  const color = STATES[d.state].color;
+  const fade = d.faint ? 0.4 : 1;
+  const floors = d.phase ? d.phase.total : 1;
+  const fh = H / floors;
+  const box = (h) => new THREE.BoxGeometry(1, h, 1);
+  const edges = (h) => new THREE.LineSegments(new THREE.EdgesGeometry(box(h)),
+    new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.5 * fade }));
+  let glow = null;
+
+  for (let f = 0; f < floors; f++) {
+    const h = fh - (floors > 1 ? 0.08 : 0);
+    const y = f * fh + h / 2;
+    const shell = new THREE.Mesh(box(h), mat(color, 0.08 * fade));
+    shell.position.y = y;
+    const line = edges(h);
+    line.position.y = y;
+    g.add(shell, line);
+    if (d.phase) {
+      // phase ที่ผ่านแล้ว = ทึบ, phase ปัจจุบัน = เรืองแสง
+      const doneFloor = f < d.phase.at - 1 || (f === d.phase.at - 1 && d.complete);
+      const current = f === d.phase.at - 1 && !d.complete;
+      if (doneFloor || current) {
+        const m = new THREE.Mesh(box(h * 0.98), mat(color, (current ? 0.55 : 0.9) * fade, current));
+        m.scale.set(0.96, 1, 0.96);
+        m.position.y = y;
+        g.add(m);
+        if (current) glow = m;
+      }
+    }
+  }
+  if (!d.phase && d.pct > 0) {
+    const h = Math.max(0.06, (d.pct / 100) * H);
+    const m = new THREE.Mesh(box(h), mat(color, 0.9 * fade));
+    m.scale.set(0.96, 1, 0.96);
+    m.position.y = h / 2;
+    g.add(m);
+  }
+
+  if (d.overdue) { // ธงแดง = เลยกำหนดส่ง
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.2), mat('#cfd6e6', 1));
+    pole.position.set(0.45, H + 0.6, 0.45);
+    const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.35), new THREE.MeshBasicMaterial({ color: '#f0605d', side: THREE.DoubleSide }));
+    flag.position.set(0.75, H + 1.0, 0.45);
+    g.add(pole, flag);
+  }
+
+  const orbit = new THREE.Group(); // จุดลอย = ไอเดียที่ยังไม่เข้า vault
+  orbit.position.y = H + 0.3;
+  d.ideas.slice(0, 8).forEach((_, i, a) => {
+    const s = new THREE.Mesh(new THREE.SphereGeometry(0.14, 12, 8), new THREE.MeshBasicMaterial({ color: '#ffe27a' }));
+    const ang = (i / a.length) * Math.PI * 2;
+    s.position.set(Math.cos(ang) * 0.8, 0, Math.sin(ang) * 0.8);
+    orbit.add(s);
+  });
+  g.add(orbit);
+
+  const lab = el('div', 'label' + (d.faint ? ' faint' : ''));
+  lab.append(el('b', null, d.name), el('span', null, labelText(d)));
+  const lo = new CSS2DObject(lab);
+  lo.position.y = H + (d.overdue ? 1.9 : 1.1);
+  g.add(lo);
+
+  return { g, glow, orbit, lab, d };
+}
+
+function labelText(d) {
+  if (d.phase) return `phase ${d.phase.at}/${d.phase.total}` + (d.total ? ` · ${d.pct}%` : '');
+  return d.total ? `${d.pct}%` : (d.faint ? 'ไม่มีใน Tracker' : 'ยังไม่มี checklist');
+}
+
+function layout(data) {
+  clearWorld();
+  const groups = new Map();
+  for (const d of data) {
+    const k = d.group || 'ไม่มีกลุ่ม';
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(d);
+  }
+  const keys = [...groups.keys()].sort((a, b) => (a === 'มีแค่ใน vault') - (b === 'มีแค่ใน vault') || a.localeCompare(b, 'th'));
+  let x = 0;
+  const placed = [];
+  for (const k of keys) {
+    const list = groups.get(k);
+    const cols = Math.ceil(Math.sqrt(list.length));
+    const rows = Math.ceil(list.length / cols);
+    const w = cols * GAP, dz = rows * GAP;
+    const base = new THREE.Mesh(new THREE.BoxGeometry(w, 0.1, dz), mat('#1b2440', 1));
+    base.position.set(x + w / 2 - GAP / 2, -0.05, dz / 2 - GAP / 2);
+    world.add(base);
+    if (keys.length > 1) {
+      const gl = new CSS2DObject(el('div', 'glabel', k));
+      gl.position.set(base.position.x, 0, -GAP * 0.9);
+      world.add(gl);
+    }
+    list.forEach((d, i) => {
+      const t = makeTower(d);
+      t.g.position.set(x + (i % cols) * GAP, 0, Math.floor(i / cols) * GAP);
+      world.add(t.g);
+      towers.push(t);
+      placed.push(t.g.position);
+    });
+    x += w + GAP;
+  }
+  // จัดให้อยู่กลางฉาก
+  const box = new THREE.Box3().setFromPoints(placed.length ? placed : [new THREE.Vector3()]);
+  const c = box.getCenter(new THREE.Vector3());
+  world.position.set(-c.x, 0, -c.z);
+  const span = Math.max(box.max.x - box.min.x, box.max.z - box.min.z, 6);
+  controls.maxDistance = span * 3 + 20;
+  if (tourIdx < 0) camera.position.set(span * 0.5 + 5, span * 0.35 + 6, span * 0.6 + 7);
+  tourIdx = Math.min(tourIdx, towers.length - 1);
+  focus(Math.max(tourIdx, 0));
+}
+
+function focus(i) {
+  if (!towers.length) { $('#info').replaceChildren(); return; }
+  tourIdx = i;
+  tourAt = Date.now();
+  towers.forEach((t, k) => t.lab.classList.toggle('focus', k === i));
+  const t = towers[i];
+  t.g.getWorldPosition(target);
+  target.y = H * 0.45;
+  showInfo(t.d);
+}
+
+function showInfo(d) {
+  const box = $('#info');
+  const kids = [];
+  if (d.total) kids.push(el('span', 'big', d.pct + '%'));
+  kids.push(el('h2', null, d.name));
+  const s = STATES[d.state];
+  const head = el('div', 'row');
+  const sw = el('span', 'sw'); // สีเดียวกับตึก + มีคำกำกับ ไม่ต้องดูสีอย่างเดียว
+  Object.assign(sw.style, { display: 'inline-block', width: '10px', height: '10px', borderRadius: '50%', marginRight: '6px', background: s.color });
+  head.append(sw, [s.text, d.total ? `checklist ${d.done}/${d.total}` : '', d.due ? (d.overdue ? 'เลยกำหนด ' : 'กำหนด ') + d.due : '']
+    .filter(Boolean).join(' · '));
+  kids.push(head);
+  if (d.note) {
+    if (d.note.phase) kids.push(el('div', 'row', 'phase: ' + d.note.phase));
+    if (d.note.progress) kids.push(el('div', null, '📓 ' + truncate(d.note.progress, 240)));
+  }
+  if (d.commit) kids.push(el('div', 'row', 'commit: ' + truncate(d.commit.message, 90) + ' · ' + relTime(Date.parse(d.commit.date))));
+  if (d.ideas.length) kids.push(el('div', 'row', `💡 ${d.ideas.length} ไอเดีย: ` + d.ideas.slice(0, 3).map((x) => truncate(x, 40)).join(' / ')));
+  box.replaceChildren(...kids);
+}
+
+const clock = new THREE.Clock();
+function frame() {
+  const t = clock.getElapsedTime();
+  if (!reduceMotion) {
+    for (const tw of towers) {
+      if (tw.glow) tw.glow.material.emissiveIntensity = 0.45 + 0.35 * Math.sin(t * 2.2);
+      tw.orbit.rotation.y = t * 0.6;
+    }
+  }
+  if (towers.length > 1 && Date.now() > pausedUntil && Date.now() - tourAt > TOUR_MS) focus((tourIdx + 1) % towers.length);
+  if (Date.now() > pausedUntil) controls.target.lerp(target, 0.03);
+  controls.update();
+  renderer.render(scene, camera);
+  labelRenderer.render(scene, camera);
+}
+
+// ---------------------------------------------------------------------------
+// ตาราง 2D (เครื่องที่ไม่มี WebGL)
+// ---------------------------------------------------------------------------
+function renderTable(data) {
+  const table = el('table');
+  const hr = el('tr');
+  ['โปรเจกต์', 'สถานะ', '%', 'phase', 'ล่าสุด'].forEach((x) => hr.append(el('th', null, x)));
+  table.append(hr);
+  for (const d of data) {
+    const tr = el('tr');
+    const st = el('td', null, STATES[d.state].text);
+    st.style.color = STATES[d.state].color;
+    tr.append(el('td', null, d.name), st, el('td', null, d.total ? d.pct + '%' : '–'),
+      el('td', null, (d.note && d.note.phase) || '–'), el('td', null, relTime(d.last) || '–'));
+    table.append(tr);
+  }
+  $('#fallback').replaceChildren(table);
+}
+
+// ---------------------------------------------------------------------------
+// HUD + โหลดข้อมูล
+// ---------------------------------------------------------------------------
+function renderChips(data, warns) {
+  const chips = [];
+  for (const k of ['green', 'amber', 'red', 'done']) {
+    const n = data.filter((d) => d.state === k && !d.faint).length;
+    if (!n) continue;
+    const c = el('span', 'chip');
+    const sw = el('span', 'sw');
+    sw.style.background = STATES[k].color;
+    c.append(sw, `${STATES[k].text} ${n}`);
+    chips.push(c);
+  }
+  const ideas = data.reduce((n, d) => n + d.ideas.length, 0);
+  if (ideas) chips.push(el('span', 'chip', `💡 ${ideas}`));
+  for (const w of warns) chips.push(el('span', 'chip warn', '⚠ ' + w));
+  chips.push(el('span', 'chip', 'ข้อมูล ' + new Date().toLocaleTimeString('th', { hour: '2-digit', minute: '2-digit' })));
+  $('#chips').replaceChildren(...chips);
+}
+
+let use3d = false;
+async function load() {
+  try {
+    const list = await get('list');
+    const warns = [];
+    const [c, v] = await Promise.allSettled([get('commits'), get('vault')]);
+    const commits = c.status === 'fulfilled' ? c.value.commits || {} : {};
+    const vault = v.status === 'fulfilled' && Array.isArray(v.value.vault) ? v.value.vault : [];
+    if (v.status === 'rejected') warns.push('อ่าน vault ไม่ได้');
+    const withRepo = list.projects.filter((p) => p.repo);
+    if (withRepo.length && !withRepo.some((p) => commits[p.id])) warns.push('ไม่มี commit เลย — GITHUB_TOKEN หมดอายุ?');
+    const newest = Math.max(0, ...vault.map((n) => Date.parse(n.updated) || 0));
+    if (newest && Date.now() - newest > 3 * DAY_MS) warns.push(`vault ไม่ได้ sync ${Math.floor((Date.now() - newest) / DAY_MS)} วัน`);
+
+    const data = build(list, commits, vault);
+    renderChips(data, warns);
+    if (use3d) layout(data); else renderTable(data);
+    $('#msg').replaceChildren();
+  } catch (e) {
+    if (e.message === 'unauthorized') return needLogin();
+    renderChips([], ['โหลดข้อมูลไม่สำเร็จ: ' + truncate(e.message, 60)]);
+  }
+}
+
+function needLogin() {
+  const m = $('#msg');
+  const a = el('a', null, 'เข้าสู่ระบบที่หน้าหลัก');
+  a.href = './';
+  const box = el('div', null, 'ยังไม่ได้เข้าสู่ระบบ — ');
+  box.append(a);
+  m.replaceChildren(box);
+}
+
+function tickClock() {
+  const now = new Date();
+  $('#clock').textContent = now.toLocaleString('th', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const hr = now.getHours();
+  document.body.classList.toggle('night', hr >= 20 || hr < 7);
+}
+
+(function init() {
+  tickClock();
+  setInterval(tickClock, 30 * 1000);
+  if (!API) { $('#msg').textContent = 'ยังไม่ได้ตั้ง API_URL ใน config.js'; return; }
+  if (!session || !session.token) return needLogin();
+  try { initScene(); use3d = true; } catch (e) {
+    console.warn('WebGL:', e);
+    $('#fallback').hidden = false;
+  }
+  load();
+  setInterval(load, REFRESH_MS); // poll ต่ออายุ session ไปด้วย เปิดทิ้งไว้ได้
+})();
+</script>
+</body>
+</html>
