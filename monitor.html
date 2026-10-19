@@ -442,7 +442,6 @@ async function load() {
     if (c.status === 'rejected') warns.push('ดึง commit ไม่ได้: ' + truncate(c.reason.message, 90));
     const withRepo = list.projects.filter((p) => p.repo);
     if (c.status === 'fulfilled' && withRepo.length && !withRepo.some((p) => commits[p.id])) warns.push('ไม่มี commit เลย — GITHUB_TOKEN หมดอายุ?');
-    warns.push(`backend ${list.version || 'เก่า'} · Tracker ${list.projects.length} โปรเจกต์ · vault ${vault.length} โน้ต`);
     const newest = Math.max(0, ...vault.map((n) => Date.parse(n.updated) || 0));
     if (newest && Date.now() - newest > 3 * DAY_MS) warns.push(`vault ไม่ได้ sync ${Math.floor((Date.now() - newest) / DAY_MS)} วัน`);
 
