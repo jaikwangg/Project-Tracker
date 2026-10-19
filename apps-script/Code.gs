@@ -112,7 +112,7 @@ var LOCK_SHORT_MS = 15 * 60 * 1000;
 var LOCK_LONG_MS = DAY_MS;
 var LOCK_ROUNDS_FOR_LONG = 3;
 
-var BACKEND_VERSION = '2026-10-16.2';
+var BACKEND_VERSION = '2026-10-19.1';
 
 var SCHEMA = {
   Projects: {
@@ -154,7 +154,7 @@ function doGet(e) {
       case 'commits':
         return { commits: getCommits_() };
       case 'vault':
-        return { vault: getVault_() };
+        return { vault: getVault_(), tokenExpires: PropertiesService.getScriptProperties().getProperty('TOKEN_EXPIRES') };
       default:
         throw new Error('ไม่รู้จัก action: ' + p.action);
     }
@@ -826,6 +826,11 @@ function getVault_() {
   if (res.getResponseCode() !== 200) {
     throw new Error('อ่าน vault ไม่ได้ (' + repo + ' HTTP ' + res.getResponseCode() + ') — เพิ่ม repo นี้ให้ GITHUB_TOKEN');
   }
+  // GitHub ส่งวันหมดอายุของ token มากับทุก response (token ที่ไม่มีวันหมดอายุจะไม่มี header นี้)
+  var hdrs = res.getAllHeaders();
+  var expKey = Object.keys(hdrs).filter(function (k) { return k.toLowerCase() === 'github-authentication-token-expiration'; })[0];
+  if (expKey) props.setProperty('TOKEN_EXPIRES', String(hdrs[expKey]));
+  else props.deleteProperty('TOKEN_EXPIRES');
   var paths = (JSON.parse(res.getContentText()).tree || [])
     .filter(function (f) { return f.type === 'blob' && /^Projects\/([^/]+)\/\1\.md$/.test(f.path); })
     .map(function (f) { return f.path; });
