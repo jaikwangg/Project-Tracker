@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark">
+<meta name="color-scheme" content="light">
 <title>Project Monitor</title>
 <link rel="icon" href="data:,">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -11,53 +11,49 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;600;700&display=swap">
 <style>
   :root {
-    --bg: #0b1020; --text: #e6e9f2; --muted: #8b93a7;
-    --panel: rgba(16, 22, 40, .85); --border: rgba(255, 255, 255, .14);
-    --green: #3ecf8e; --amber: #f5b546; --red: #f0605d; --blue: #5b9cff; --gray: #7c8496;
+    --bg: #fbf6ee; --text: #3b3a46; --muted: #8a8798;
+    --panel: #ffffff; --border: rgba(60, 50, 40, .1);
+    --amber: #d9962a; --blue: #4f86d8;
   }
-  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
+  html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text);
     font-family: 'IBM Plex Sans Thai', system-ui, sans-serif; }
-  #scene { position: fixed; inset: 0; }
-  .hud { position: fixed; top: 16px; left: 16px; right: 16px; display: flex; flex-wrap: wrap; gap: 8px;
-    align-items: center; pointer-events: none; }
-  .hud h1 { margin: 0 8px 0 0; font-size: 20px; }
+  .hud { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 16px 16px 4px; }
+  .hud h1 { margin: 0 8px 0 0; font-size: 22px; }
   .hud .spacer { flex: 1; }
-  .chip { padding: 4px 10px; border-radius: 999px; background: var(--panel); border: 1px solid var(--border); font-size: 14px; }
-  .chip .sw { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+  .chip { padding: 4px 12px; border-radius: 999px; background: var(--panel); border: 1px solid var(--border); font-size: 14px; }
+  .chip .sw { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
   .chip.warn { border-color: var(--amber); color: var(--amber); }
-  .hud a { pointer-events: auto; color: var(--muted); font-size: 14px; }
-  #info { position: fixed; left: 16px; bottom: 16px; min-width: min(340px, calc(100vw - 32px)); box-sizing: border-box; max-width: min(560px, calc(100vw - 32px)); padding: 14px 16px;
-    background: var(--panel); border: 1px solid var(--border); border-radius: 12px; font-size: 14px; line-height: 1.5; }
-  #info:empty { display: none; }
-  #info h2 { margin: 0 0 4px; font-size: 20px; }
-  #info .row { color: var(--muted); overflow-wrap: anywhere; }
-  #info .big { font-size: 28px; font-weight: 700; float: right; margin-left: 12px; }
-  .label { padding: 2px 8px; border-radius: 6px; background: var(--panel); border: 1px solid var(--border);
-    font-size: 13px; white-space: nowrap; text-align: center; transition: border-color .4s; }
-  .label b { display: block; font-size: 14px; }
-  .label:not(.focus) { opacity: .75; }
-  .label.focus { border-color: var(--text); }
-  .label.faint { opacity: .55; }
-  .glabel { font-size: 15px; font-weight: 600; color: var(--muted); }
-  #msg { position: fixed; inset: 0; display: grid; place-items: center; text-align: center; padding: 16px; }
+  .hud a { color: var(--muted); font-size: 14px; }
+  #main { padding: 8px 16px 32px; }
+  #main h2 { font-size: 16px; color: var(--muted); font-weight: 600; margin: 20px 4px 10px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr)); gap: 14px; }
+  .pet { display: flex; gap: 14px; align-items: flex-start; padding: 16px; border-radius: 20px; background: var(--panel);
+    border: 2px solid color-mix(in srgb, var(--c) 35%, transparent); box-shadow: 0 4px 14px rgba(90, 70, 40, .06); }
+  .pet.faint { opacity: .55; }
+  .face { position: relative; font-size: 52px; line-height: 1; flex: none; width: 64px; text-align: center;
+    animation: breathe 4s ease-in-out infinite; }
+  .pet.red .face { filter: grayscale(.4); animation: none; transform: rotate(-8deg); }
+  .pet.gray .face { filter: grayscale(1); animation: none; }
+  .pet.amber .face { animation-duration: 7s; }
+  .badge { position: absolute; right: -6px; top: -8px; font-size: 22px; }
+  .body { min-width: 0; flex: 1; }
+  .pet h3 { margin: 0 0 2px; font-size: 17px; overflow-wrap: anywhere; }
+  .mood { font-size: 14px; color: var(--c); font-weight: 600; filter: brightness(.85); }
+  .bar { height: 8px; border-radius: 999px; background: rgba(60, 50, 40, .08); margin: 10px 0 6px; overflow: hidden; }
+  .fill { height: 100%; border-radius: 999px; background: var(--c); transition: width 1s; }
+  .meta { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+  .commit { font-style: italic; }
+  @keyframes breathe { 50% { transform: translateY(-2px) scale(1.04); } }
+  @media (prefers-reduced-motion: reduce) { .face { animation: none !important; } }
+  #msg { padding: 48px 16px; text-align: center; font-size: 16px; }
   #msg:empty { display: none; }
   #msg a { color: var(--blue); }
-  #fallback { position: fixed; inset: 72px 16px 16px; overflow: auto; }
-  #fallback table { width: 100%; border-collapse: collapse; font-size: 15px; }
-  #fallback td, #fallback th { padding: 8px; border-bottom: 1px solid var(--border); text-align: left; }
-  #dim { position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none; transition: opacity 3s; }
-  body.night #dim { opacity: .5; }
+  #dim { position: fixed; inset: 0; background: #2a2416; opacity: 0; pointer-events: none; transition: opacity 3s; }
+  body.night #dim { opacity: .35; }
 </style>
 <script src="config.js"></script>
-<script type="importmap">
-{ "imports": {
-  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
-} }
-</script>
 </head>
 <body>
-<div id="scene"></div>
 <div class="hud">
   <h1>Projects</h1>
   <span id="chips" style="display:contents"></span>
@@ -65,31 +61,21 @@
   <span id="clock" class="chip"></span>
   <a href="./">กลับหน้าหลัก</a>
 </div>
-<div id="info" aria-live="polite"></div>
-<div id="fallback" hidden></div>
 <div id="msg"></div>
+<main id="main"></main>
 <div id="dim"></div>
 
 <script type="module">
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-
 const API = typeof API_URL === 'string' ? API_URL.trim() : '';
 const REFRESH_MS = 5 * 60 * 1000;
-const TOUR_MS = 15 * 1000;
-const PAUSE_AFTER_TOUCH_MS = 60 * 1000;
 const DAY_MS = 86400000;
-const H = 5;       // ความสูงตึกเมื่อเสร็จ 100%
-const GAP = 3.4;   // ระยะห่างระหว่างตึก
 const STATES = {
-  green: { color: '#3ecf8e', text: 'อัปเดตไม่เกิน 3 วัน' },
-  amber: { color: '#f5b546', text: 'อัปเดต 4–7 วัน' },
-  red:   { color: '#f0605d', text: 'ไม่ขยับเกิน 7 วัน' },
-  done:  { color: '#5b9cff', text: 'เสร็จแล้ว' },
-  gray:  { color: '#7c8496', text: 'ไม่มีข้อมูล / เก่า' },
+  green: { color: '#5cc69a', text: 'อัปเดตไม่เกิน 3 วัน', mood: 'สบายดี', badge: '✨' },
+  amber: { color: '#f0b452', text: 'อัปเดต 4–7 วัน', mood: 'เริ่มง่วง', badge: '💤' },
+  red:   { color: '#ef7b73', text: 'ไม่ขยับเกิน 7 วัน', mood: 'เหงาแล้วนะ', badge: '🥺' },
+  done:  { color: '#6ea8ff', text: 'เสร็จแล้ว', mood: 'ฉลอง!', badge: '🎉' },
+  gray:  { color: '#a3a5b3', text: 'ไม่มีข้อมูล / เก่า', mood: 'หลับยาว', badge: '👻' },
 };
-const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const $ = (s) => document.querySelector(s);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const truncate = (s, n) => { const a = Array.from(s || ''); return a.length > n ? a.slice(0, n).join('') + '…' : a.join(''); };
@@ -163,143 +149,39 @@ function entry(d) {
 }
 
 // ---------------------------------------------------------------------------
-// ฉาก 3D
+// การ์ดสัตว์เลี้ยง: โปรเจกต์ละตัว อารมณ์ตามสถานะ
 // ---------------------------------------------------------------------------
-let renderer, labelRenderer, scene, camera, controls, world;
-const towers = [];
-let tourIdx = -1, tourAt = 0, pausedUntil = 0;
-const target = new THREE.Vector3();
+const PETS = ['🐱', '🐶', '🐰', '🐹', '🐻', '🐼', '🐨', '🦊'];
+const petOf = (name) => PETS[Array.from(name).reduce((h, ch) => (h * 31 + ch.codePointAt(0)) >>> 0, 0) % PETS.length];
 
-function initScene() {
-  renderer = new THREE.WebGLRenderer({ antialias: true }); // ไม่มี WebGL → throw → ใช้ตาราง
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-  renderer.setSize(innerWidth, innerHeight);
-  $('#scene').append(renderer.domElement);
-  labelRenderer = new CSS2DRenderer();
-  labelRenderer.setSize(innerWidth, innerHeight);
-  Object.assign(labelRenderer.domElement.style, { position: 'absolute', inset: '0', pointerEvents: 'none' });
-  $('#scene').append(labelRenderer.domElement);
-
-  scene = new THREE.Scene();
-  scene.background = new THREE.Color('#0b1020');
-  scene.fog = new THREE.Fog('#0b1020', 30, 70);
-  camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 200);
-  camera.position.set(14, 12, 18);
-  controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableDamping = true;
-  controls.autoRotate = !reduceMotion;
-  controls.autoRotateSpeed = 0.35;
-  controls.maxPolarAngle = Math.PI * 0.47;
-  controls.addEventListener('start', () => { pausedUntil = Date.now() + PAUSE_AFTER_TOUCH_MS; });
-
-  scene.add(new THREE.HemisphereLight('#c9d6ff', '#1a1f33', 1.1));
-  const sun = new THREE.DirectionalLight('#ffffff', 1.2);
-  sun.position.set(10, 20, 8);
-  scene.add(sun);
-  const grid = new THREE.GridHelper(80, 40, '#26304d', '#161d33');
-  scene.add(grid);
-  world = new THREE.Group();
-  scene.add(world);
-
-  addEventListener('resize', () => {
-    camera.aspect = innerWidth / innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(innerWidth, innerHeight);
-    labelRenderer.setSize(innerWidth, innerHeight);
-  });
-  renderer.setAnimationLoop(frame);
-}
-
-function clearWorld() {
-  world.traverse((o) => { o.geometry && o.geometry.dispose(); o.material && o.material.dispose(); });
-  world.clear();
-  towers.length = 0;
-}
-
-function mat(color, opacity, emissive) {
-  return new THREE.MeshStandardMaterial({ color, transparent: opacity < 1, opacity, roughness: 0.5,
-    emissive: emissive ? color : '#000000', emissiveIntensity: emissive ? 0.6 : 0, depthWrite: opacity >= 1 });
-}
-
-function makeTower(d) {
-  const g = new THREE.Group();
-  const color = STATES[d.state].color;
-  const fade = d.faint ? 0.4 : 1;
-  const floors = d.phase ? d.phase.total : 1;
-  const fh = H / floors;
-  const box = (h) => new THREE.BoxGeometry(1, h, 1);
-  const edges = (h) => new THREE.LineSegments(new THREE.EdgesGeometry(box(h)),
-    new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.5 * fade }));
-  let glow = null;
-
-  for (let f = 0; f < floors; f++) {
-    const h = fh - (floors > 1 ? 0.08 : 0);
-    const y = f * fh + h / 2;
-    const shell = new THREE.Mesh(box(h), mat(color, 0.14 * fade));
-    shell.position.y = y;
-    const line = edges(h);
-    line.position.y = y;
-    g.add(shell, line);
-    if (d.phase) {
-      // phase ที่ผ่านแล้ว = ทึบ, phase ปัจจุบัน = เรืองแสง
-      const doneFloor = f < d.phase.at - 1 || (f === d.phase.at - 1 && d.complete);
-      const current = f === d.phase.at - 1 && !d.complete;
-      if (doneFloor || current) {
-        const m = new THREE.Mesh(box(h * 0.98), mat(color, (current ? 0.55 : 0.9) * fade, current));
-        m.scale.set(0.96, 1, 0.96);
-        m.position.y = y;
-        g.add(m);
-        if (current) glow = m;
-      }
-    }
+function card(d) {
+  const st = STATES[d.state];
+  const c = el('article', 'pet ' + d.state + (d.faint ? ' faint' : ''));
+  c.style.setProperty('--c', st.color);
+  const face = el('div', 'face', petOf(d.name));
+  face.append(el('span', 'badge', d.overdue ? '⏰' : st.badge));
+  const body = el('div', 'body');
+  body.append(el('h3', null, d.name), el('div', 'mood', st.mood + ' · ' + st.text));
+  if (d.total) {
+    const bar = el('div', 'bar');
+    const fill = el('div', 'fill');
+    fill.style.width = d.pct + '%';
+    bar.append(fill);
+    body.append(bar, el('div', 'meta', `${d.pct}% · checklist ${d.done}/${d.total}` + (d.phase ? ` · phase ${d.phase.at}/${d.phase.total}` : '')));
+  } else {
+    body.append(el('div', 'meta', d.faint ? 'มีแค่ใน vault' : 'ยังไม่มี checklist'));
   }
-  // ฐานทึบเสมอ — โปรเจกต์ที่ยังไม่มี checklist/phase จะได้ไม่เป็นกล่องเปล่า และยังเห็นสีสถานะ
-  const base = new THREE.Mesh(box(0.3), mat(color, 0.95 * fade, true));
-  base.scale.set(1.04, 1, 1.04);
-  base.position.y = 0.15;
-  g.add(base);
-  if (!d.phase && d.pct > 0) {
-    const h = Math.max(0.06, (d.pct / 100) * H);
-    const m = new THREE.Mesh(box(h), mat(color, 0.9 * fade));
-    m.scale.set(0.96, 1, 0.96);
-    m.position.y = h / 2;
-    g.add(m);
-  }
-
-  if (d.overdue) { // ธงแดง = เลยกำหนดส่ง
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.2), mat('#cfd6e6', 1));
-    pole.position.set(0.45, H + 0.6, 0.45);
-    const flag = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.35), new THREE.MeshBasicMaterial({ color: '#f0605d', side: THREE.DoubleSide }));
-    flag.position.set(0.75, H + 1.0, 0.45);
-    g.add(pole, flag);
-  }
-
-  const orbit = new THREE.Group(); // จุดลอย = ไอเดียที่ยังไม่เข้า vault
-  orbit.position.y = H + 0.3;
-  d.ideas.slice(0, 8).forEach((_, i, a) => {
-    const s = new THREE.Mesh(new THREE.SphereGeometry(0.14, 12, 8), new THREE.MeshBasicMaterial({ color: '#ffe27a' }));
-    const ang = (i / a.length) * Math.PI * 2;
-    s.position.set(Math.cos(ang) * 0.8, 0, Math.sin(ang) * 0.8);
-    orbit.add(s);
-  });
-  g.add(orbit);
-
-  const lab = el('div', 'label' + (d.faint ? ' faint' : ''));
-  lab.append(el('b', null, d.name), el('span', null, labelText(d)));
-  const lo = new CSS2DObject(lab);
-  lo.position.y = H + (d.overdue ? 1.9 : 1.1);
-  g.add(lo);
-
-  return { g, glow, orbit, lab, d };
+  const bits = [];
+  if (d.last) bits.push('ล่าสุด ' + relTime(d.last));
+  if (d.due) bits.push((d.overdue ? 'เลยกำหนด ' : 'กำหนด ') + d.due);
+  if (d.ideas.length) bits.push(`💡 ${d.ideas.length}`);
+  if (bits.length) body.append(el('div', 'meta', bits.join(' · ')));
+  if (d.commit) body.append(el('div', 'meta commit', truncate(d.commit.message, 70)));
+  c.append(face, body);
+  return c;
 }
 
-function labelText(d) {
-  if (d.phase) return `phase ${d.phase.at}/${d.phase.total}` + (d.total ? ` · ${d.pct}%` : '');
-  return d.total ? `${d.pct}%` : (d.faint ? 'ไม่มีใน Tracker' : 'ยังไม่มี checklist');
-}
-
-function layout(data) {
-  clearWorld();
+function render(data) {
   const groups = new Map();
   for (const d of data) {
     const k = d.group || 'ไม่มีกลุ่ม';
@@ -307,106 +189,16 @@ function layout(data) {
     groups.get(k).push(d);
   }
   const keys = [...groups.keys()].sort((a, b) => (a === 'มีแค่ใน vault') - (b === 'มีแค่ใน vault') || a.localeCompare(b, 'th'));
-  let x = 0;
-  const placed = [];
+  const out = [];
   for (const k of keys) {
-    const list = groups.get(k);
-    const cols = Math.ceil(Math.sqrt(list.length));
-    const rows = Math.ceil(list.length / cols);
-    const w = cols * GAP, dz = rows * GAP;
-    const base = new THREE.Mesh(new THREE.BoxGeometry(w, 0.1, dz), mat('#1b2440', 1));
-    base.position.set(x + w / 2 - GAP / 2, -0.05, dz / 2 - GAP / 2);
-    world.add(base);
-    if (keys.length > 1) {
-      const gl = new CSS2DObject(el('div', 'glabel', k));
-      gl.position.set(base.position.x, 0, -GAP * 0.9);
-      world.add(gl);
-    }
-    list.forEach((d, i) => {
-      const t = makeTower(d);
-      t.g.position.set(x + (i % cols) * GAP, 0, Math.floor(i / cols) * GAP);
-      world.add(t.g);
-      towers.push(t);
-      placed.push(t.g.position);
-    });
-    x += w + GAP;
+    const sec = el('section');
+    if (keys.length > 1) sec.append(el('h2', null, k));
+    const grid = el('div', 'grid');
+    grid.append(...groups.get(k).map(card));
+    sec.append(grid);
+    out.push(sec);
   }
-  // จัดให้อยู่กลางฉาก
-  const box = new THREE.Box3().setFromPoints(placed.length ? placed : [new THREE.Vector3()]);
-  const c = box.getCenter(new THREE.Vector3());
-  world.position.set(-c.x, 0, -c.z);
-  const span = Math.max(box.max.x - box.min.x, box.max.z - box.min.z, 6);
-  controls.maxDistance = span * 3 + 20;
-  if (tourIdx < 0) camera.position.set(span * 0.5 + 5, span * 0.35 + 6, span * 0.6 + 7);
-  tourIdx = Math.min(tourIdx, towers.length - 1);
-  focus(Math.max(tourIdx, 0));
-}
-
-function focus(i) {
-  if (!towers.length) { $('#info').replaceChildren(); return; }
-  tourIdx = i;
-  tourAt = Date.now();
-  towers.forEach((t, k) => t.lab.classList.toggle('focus', k === i));
-  const t = towers[i];
-  t.g.getWorldPosition(target);
-  target.y = H * 0.45;
-  showInfo(t.d);
-}
-
-function showInfo(d) {
-  const box = $('#info');
-  const kids = [];
-  if (d.total) kids.push(el('span', 'big', d.pct + '%'));
-  kids.push(el('h2', null, d.name));
-  const s = STATES[d.state];
-  const head = el('div', 'row');
-  const sw = el('span', 'sw'); // สีเดียวกับตึก + มีคำกำกับ ไม่ต้องดูสีอย่างเดียว
-  Object.assign(sw.style, { display: 'inline-block', width: '10px', height: '10px', borderRadius: '50%', marginRight: '6px', background: s.color });
-  head.append(sw, [s.text, d.total ? `checklist ${d.done}/${d.total}` : '', d.due ? (d.overdue ? 'เลยกำหนด ' : 'กำหนด ') + d.due : '']
-    .filter(Boolean).join(' · '));
-  kids.push(head);
-  if (d.note) {
-    if (d.note.phase) kids.push(el('div', 'row', 'phase: ' + d.note.phase));
-    if (d.note.progress) kids.push(el('div', null, '📓 ' + truncate(d.note.progress, 240)));
-  }
-  if (d.commit) kids.push(el('div', 'row', 'commit: ' + truncate(d.commit.message, 90) + ' · ' + relTime(Date.parse(d.commit.date))));
-  if (d.ideas.length) kids.push(el('div', 'row', `💡 ${d.ideas.length} ไอเดีย: ` + d.ideas.slice(0, 3).map((x) => truncate(x, 40)).join(' / ')));
-  box.replaceChildren(...kids);
-}
-
-const clock = new THREE.Clock();
-function frame() {
-  const t = clock.getElapsedTime();
-  if (!reduceMotion) {
-    for (const tw of towers) {
-      if (tw.glow) tw.glow.material.emissiveIntensity = 0.45 + 0.35 * Math.sin(t * 2.2);
-      tw.orbit.rotation.y = t * 0.6;
-    }
-  }
-  if (towers.length > 1 && Date.now() > pausedUntil && Date.now() - tourAt > TOUR_MS) focus((tourIdx + 1) % towers.length);
-  if (Date.now() > pausedUntil) controls.target.lerp(target, 0.03);
-  controls.update();
-  renderer.render(scene, camera);
-  labelRenderer.render(scene, camera);
-}
-
-// ---------------------------------------------------------------------------
-// ตาราง 2D (เครื่องที่ไม่มี WebGL)
-// ---------------------------------------------------------------------------
-function renderTable(data) {
-  const table = el('table');
-  const hr = el('tr');
-  ['โปรเจกต์', 'สถานะ', '%', 'phase', 'ล่าสุด'].forEach((x) => hr.append(el('th', null, x)));
-  table.append(hr);
-  for (const d of data) {
-    const tr = el('tr');
-    const st = el('td', null, STATES[d.state].text);
-    st.style.color = STATES[d.state].color;
-    tr.append(el('td', null, d.name), st, el('td', null, d.total ? d.pct + '%' : '–'),
-      el('td', null, (d.note && d.note.phase) || '–'), el('td', null, relTime(d.last) || '–'));
-    table.append(tr);
-  }
-  $('#fallback').replaceChildren(table);
+  $('#main').replaceChildren(...out);
 }
 
 // ---------------------------------------------------------------------------
@@ -430,7 +222,6 @@ function renderChips(data, warns) {
   $('#chips').replaceChildren(...chips);
 }
 
-let use3d = false;
 async function load() {
   try {
     const list = await get('list');
@@ -452,7 +243,7 @@ async function load() {
 
     const data = build(list, commits, vault);
     renderChips(data, warns);
-    if (use3d) layout(data); else renderTable(data);
+    render(data);
     $('#msg').textContent = data.length ? '' : 'ไม่มีข้อมูลให้แสดง — ดูข้อความ ⚠ ด้านบน';
   } catch (e) {
     if (e.message === 'unauthorized') return needLogin();
@@ -481,10 +272,6 @@ function tickClock() {
   setInterval(tickClock, 30 * 1000);
   if (!API) { $('#msg').textContent = 'ยังไม่ได้ตั้ง API_URL ใน config.js'; return; }
   if (!session || !session.token) return needLogin();
-  try { initScene(); use3d = true; } catch (e) {
-    console.warn('WebGL:', e);
-    $('#fallback').hidden = false;
-  }
   load();
   setInterval(load, REFRESH_MS); // poll ต่ออายุ session ไปด้วย เปิดทิ้งไว้ได้
 })();
